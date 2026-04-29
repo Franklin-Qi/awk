@@ -463,7 +463,7 @@ struct ListLispCasesFmt<'a, I: Debug, T: Debug>(&'a [(I, Vec<'a, T>)]);
 impl Debug for Statement<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Statement::Expression(expr) => write!(f, "(body {expr:?})"),
+            Statement::Expression(expr) => write!(f, "{expr:?}"),
             Self::Command {
                 name,
                 args,
