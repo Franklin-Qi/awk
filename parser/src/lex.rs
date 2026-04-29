@@ -1,0 +1,204 @@
+use std::iter::Peekable;
+
+use lexer::{LexingError, Logos, Token};
+
+use crate::{
+    ParsingError,
+    ast::{Command, SpecialPattern},
+};
+
+#[derive(Debug)]
+pub struct Lexer<'a> {
+    inner: Peekable<lexer::Lexer<'a>>,
+    // source: &'a [u8],
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(source: &'a [u8]) -> Self {
+        Self {
+            inner: Token::lexer(source).peekable(),
+            // source,
+        }
+    }
+
+    pub fn peek(&mut self) -> Option<&<Self as Iterator>::Item> {
+        self.inner.peek()
+    }
+
+    pub fn peek_with(&mut self, f: impl FnOnce(&Token<'a>) -> bool) -> bool {
+        self.peek().is_some_and(|r| r.as_ref().is_ok_and(f))
+    }
+
+    pub fn peek_is(&mut self, b: &Token<'a>) -> bool {
+        self.peek()
+            .is_some_and(|r| r.as_ref().is_ok_and(|t| t == b))
+    }
+
+    pub fn expect(&mut self, expected: &Token) -> super::Result<Token<'a>> {
+        match self.next() {
+            Some(Ok(tok)) if expected == &tok => Ok(tok),
+            Some(Ok(_)) => Err(ParsingError::UnexpectedToken),
+            Some(err @ Err(_)) => err.map_err(Into::into),
+            None => todo!(),
+        }
+    }
+
+    pub fn expect_with(
+        &mut self,
+        expected: impl FnOnce(&Token<'a>) -> bool,
+    ) -> super::Result<Token<'a>> {
+        match self.next() {
+            Some(Ok(tok)) if expected(&tok) => Ok(tok),
+            Some(Ok(_)) => Err(ParsingError::UnexpectedToken),
+            Some(err @ Err(_)) => err.map_err(Into::into),
+            None => todo!(),
+        }
+    }
+
+    pub fn expect_identifier(&mut self) -> super::Result<lexer::Identifier<'a>> {
+        let Token::Identifier(name) = self.expect_with(|t| matches!(t, Token::Identifier(_)))?
+        else {
+            unreachable!()
+        };
+        Ok(name)
+    }
+
+    pub fn consume(&mut self, token: &Token) -> bool {
+        if let Some(Ok(next)) = self.peek()
+            && next == token
+        {
+            self.next();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn consume_with(&mut self, f: impl FnOnce(&Token<'a>) -> bool) -> bool {
+        if let Some(Ok(next)) = self.peek()
+            && f(next)
+        {
+            self.next();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn next_if(
+        &mut self,
+        f: impl FnOnce(&<Self as Iterator>::Item) -> bool,
+    ) -> Option<<Self as Iterator>::Item> {
+        self.inner.next_if(f)
+    }
+
+    pub fn expect_next(&mut self) -> super::Result<Token<'a>> {
+        match self.next() {
+            None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
+            Some(Ok(tok)) => Ok(tok),
+            Some(Err(err)) => Err(ParsingError::LexingError(err)),
+        }
+    }
+
+    pub fn expect_peek(&mut self) -> super::Result<&Token<'a>> {
+        match self.peek() {
+            None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
+            Some(Ok(tok)) => Ok(tok),
+            Some(Err(err)) => Err(ParsingError::LexingError(err.clone())),
+        }
+    }
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Result<Token<'a>, LexingError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+pub trait TokenExt {
+    fn is_prefix_op(&self) -> bool;
+    fn is_atom(&self) -> bool;
+    fn is_expr_start(&self) -> bool;
+    fn is_pattern_start(&self) -> bool;
+    fn maps_to_command(&self) -> Option<Command>;
+    fn maps_to_special_pat(&self) -> Option<SpecialPattern>;
+    fn is_stmnt_end(&self) -> bool;
+    fn is_stmnt_or_block_end(&self) -> bool;
+    fn is_brace(&self) -> bool;
+}
+
+impl TokenExt for Token<'_> {
+    fn is_prefix_op(&self) -> bool {
+        matches!(
+            self,
+            Token::Increment
+                | Token::Decrement
+                | Token::Record
+                | Token::Negation
+                | Token::Minus
+                | Token::Plus
+                | Token::Getline
+        )
+    }
+    fn is_atom(&self) -> bool {
+        matches!(
+            self,
+            Token::Number(_)
+                | Token::String(_)
+                | Token::Regex(_)
+                | Token::Identifier(_)
+                | Token::NrVariable
+                | Token::NfVariable
+                | Token::FsVariable
+                | Token::RsVariable
+                | Token::OfsVariable
+                | Token::OrsVariable
+                | Token::FilenameVariable
+                | Token::ArgcVariable
+                | Token::ArgvVariable
+                | Token::SubsepVariable
+                | Token::FnrVariable
+                | Token::OfmtVariable
+                | Token::RstartVariable
+                | Token::RlengthVariable
+                | Token::EnvironVariable
+        )
+    }
+    fn is_expr_start(&self) -> bool {
+        self.is_atom() || self.is_prefix_op()
+    }
+    fn is_pattern_start(&self) -> bool {
+        self.is_expr_start() || self.maps_to_special_pat().is_some()
+    }
+    fn maps_to_command(&self) -> Option<Command> {
+        match self {
+            Token::Print => Some(Command::Print),
+            Token::Printf => Some(Command::Printf),
+            Token::Getline => Some(Command::Getline),
+            Token::Next => Some(Command::Next),
+            Token::NextFile => Some(Command::NextFile),
+            Token::Exit => Some(Command::Exit),
+            _ => None,
+        }
+    }
+    fn maps_to_special_pat(&self) -> Option<SpecialPattern> {
+        match self {
+            Self::BeginPattern => Some(SpecialPattern::Begin),
+            Self::EndPattern => Some(SpecialPattern::End),
+            Self::BeginFilePattern => Some(SpecialPattern::BeginFile),
+            Self::EndFilePattern => Some(SpecialPattern::EndFile),
+            _ => None,
+        }
+    }
+    fn is_stmnt_end(&self) -> bool {
+        matches!(self, Token::Newline | Token::Semicolon)
+    }
+    fn is_stmnt_or_block_end(&self) -> bool {
+        self.is_stmnt_end() || self == &Token::ClosedBrace
+    }
+    fn is_brace(&self) -> bool {
+        matches!(self, Token::OpenBrace | Token::ClosedBrace)
+    }
+}

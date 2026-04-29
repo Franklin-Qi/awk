@@ -1,0 +1,15 @@
+[package]
+name = "lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+logos = "0.16.1"
+# bytecount = "0.6.9"
+memchr.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

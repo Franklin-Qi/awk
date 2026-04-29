@@ -1,0 +1,15 @@
+[package]
+name = "interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+color-eyre.workspace = true
+either.workspace = true
+memchr.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
