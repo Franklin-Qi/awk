@@ -25,7 +25,7 @@ pub struct Rule<'a> {
     pub actions: Option<Body<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Atom<'a> {
     Variable(Variable<'a>),
     String(Slice<'a>),
@@ -55,7 +55,7 @@ pub struct Identifier<'a> {
     pub literal: &'a str,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum Variable<'a> {
     User(Identifier<'a>),
     Nr,
@@ -82,7 +82,8 @@ pub enum Expr<'a> {
     Node(&'a ExprNode<'a>),
 }
 
-pub type Body<'a> = Vec<'a, Statement<'a>>;
+#[derive(Clone)]
+pub struct Body<'a>(pub Vec<'a, Statement<'a>>);
 pub type Pattern<'a> = Either<RulePattern<'a>, SpecialPattern>;
 
 #[derive(Debug, Clone)]
@@ -436,13 +437,19 @@ impl BindingPower for Ternary {
     }
 }
 
+impl<'a> From<Vec<'a, Statement<'a>>> for Body<'a> {
+    fn from(value: Vec<'a, Statement<'a>>) -> Self {
+        Self(value)
+    }
+}
+
 impl Debug for Expr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Leaf(atom) => write!(f, "{atom:?}"),
             Self::Node(expr) => match expr {
                 ExprNode::FunctionCall(ident, args) => {
-                    write!(f, "(call Identifier({ident:?})")?;
+                    write!(f, "({ident:?}")?;
                     for arg in args {
                         write!(f, " {arg:?}")?;
                     }
@@ -454,129 +461,5 @@ impl Debug for Expr<'_> {
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
             },
         }
-    }
-}
-
-struct ListLispFmt<'a, T: Debug>(&'a [T]);
-struct ListLispCasesFmt<'a, I: Debug, T: Debug>(&'a [(I, Vec<'a, T>)]);
-
-impl Debug for Statement<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Statement::Expression(expr) => write!(f, "{expr:?}"),
-            Self::Command {
-                name,
-                args,
-                redirection,
-            } => {
-                if let Some(rx) = redirection {
-                    write!(f, "(redir {rx:?} ({name:?}{:?}))", ListLispFmt(args))
-                } else {
-                    write!(f, "({name:?}{:?})", ListLispFmt(args))
-                }
-            }
-            Self::If {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                if let Some(else_body) = else_body {
-                    write!(
-                        f,
-                        "(if {condition:?} (body{:?}) Some(body{:?}))",
-                        ListLispFmt(then_body),
-                        ListLispFmt(else_body)
-                    )
-                } else {
-                    write!(
-                        f,
-                        "(if {condition:?} (body{:?}) None)",
-                        ListLispFmt(then_body)
-                    )
-                }
-            }
-            Self::While {
-                condition,
-                then_body,
-            } => write!(
-                f,
-                "(while {condition:?} (body{:?}))",
-                ListLispFmt(then_body)
-            ),
-            Self::DoWhile {
-                then_body,
-                condition,
-            } => write!(
-                f,
-                "(do-while (body{:?}) {condition:?})",
-                ListLispFmt(then_body)
-            ),
-            Self::For {
-                init,
-                condition,
-                update,
-                body,
-            } => {
-                write!(
-                    f,
-                    "(for {init:?} {condition:?} {update:?} (body{:?}))",
-                    ListLispFmt(body)
-                )
-            }
-            Self::ForEach { place, array, body } => {
-                write!(
-                    f,
-                    "(for-each {place:?} {array:?} (body{:?}))",
-                    ListLispFmt(body)
-                )
-            }
-            Self::Switch {
-                scrutinee,
-                branches,
-                default,
-            } => {
-                if let Some((dx, i)) = default {
-                    write!(
-                        f,
-                        "(switch {scrutinee:?} (cases{:?}) (body{:?}) {i})",
-                        ListLispCasesFmt(branches),
-                        ListLispFmt(dx)
-                    )
-                } else {
-                    write!(
-                        f,
-                        "(switch {scrutinee:?} (cases{:?}))",
-                        ListLispCasesFmt(branches)
-                    )
-                }
-            }
-            Self::Continue => write!(f, "(continue)"),
-            Self::Break => write!(f, "(break)"),
-            Self::Return(expr) => write!(f, "(return {expr:?})"),
-        }
-    }
-}
-
-impl<T: Debug> Debug for ListLispFmt<'_, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for e in self.0 {
-            write!(f, " {e:?}")?;
-        }
-        Ok(())
-    }
-}
-
-impl<I: Debug, T: Debug> Debug for ListLispCasesFmt<'_, I, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, e) in self.0 {
-            write!(f, " (case {i:?} (eval{:?})", ListLispFmt(e))?;
-        }
-        Ok(())
-    }
-}
-
-impl Debug for Identifier<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}::{}", self.namespace, self.literal)
     }
 }

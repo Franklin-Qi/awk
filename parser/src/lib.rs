@@ -1,5 +1,6 @@
 mod ast;
 mod lex;
+mod sexpr;
 
 use std::{fmt::Debug, mem::replace};
 
@@ -173,7 +174,7 @@ impl<'a> Parser<'a> {
                 match lex.expect_next()? {
                     Token::ClosedBrace => {
                         if depth == 0 {
-                            break Ok(body);
+                            break Ok(Body(body));
                         }
                         depth -= 1;
                     }
@@ -238,7 +239,7 @@ impl<'a> Parser<'a> {
                             return Err(ParsingError::UnexpectedToken);
                         };
                         lex.expect(&Token::ClosedParent)?;
-                        let body: Vec<'_, Statement<'_>> = self.parse_statement_body(lex)?;
+                        let body = self.parse_statement_body(lex)?;
                         Statement::ForEach {
                             place: *place,
                             array: *array,
@@ -259,12 +260,14 @@ impl<'a> Parser<'a> {
                             match case.take() {
                                 Some(Right(())) => {
                                     default = Some((
-                                        replace(&mut body, Vec::new_in(self.arena)),
+                                        replace(&mut body, Vec::new_in(self.arena)).into(),
                                         branches.len(),
                                     ));
                                 }
-                                Some(Left(atom)) => branches
-                                    .push((atom, replace(&mut body, Vec::new_in(self.arena)))),
+                                Some(Left(atom)) => branches.push((
+                                    atom,
+                                    replace(&mut body, Vec::new_in(self.arena)).into(),
+                                )),
                                 _ => {}
                             }
                             case = Some(Left(self.parse_case(lex)?));
@@ -273,7 +276,10 @@ impl<'a> Parser<'a> {
                             if default.is_some() || matches!(case, Some(Right(()))) {
                                 return Err(ParsingError::UnexpectedToken);
                             } else if let Some(Left(atom)) = case {
-                                branches.push((atom, replace(&mut body, Vec::new_in(self.arena))));
+                                branches.push((
+                                    atom,
+                                    replace(&mut body, Vec::new_in(self.arena)).into(),
+                                ));
                             }
                             case = Some(Right(()));
                         } else {
@@ -285,8 +291,8 @@ impl<'a> Parser<'a> {
                         }
                     }
                     match case.take() {
-                        Some(Right(())) => default = Some((body, branches.len())),
-                        Some(Left(atom)) => branches.push((atom, body)),
+                        Some(Right(())) => default = Some((body.into(), branches.len())),
+                        Some(Left(atom)) => branches.push((atom, body.into())),
                         _ => {}
                     }
 
@@ -360,7 +366,7 @@ impl<'a> Parser<'a> {
         if lex.peek_is(&Token::OpenBrace) {
             self.parse_body(lex)
         } else {
-            Ok(vec![in self.arena; self.parse_statement(lex)?])
+            Ok(vec![in self.arena; self.parse_statement(lex)?].into())
         }
     }
 

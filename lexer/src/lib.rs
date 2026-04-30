@@ -2,7 +2,11 @@
 mod tests;
 
 use core::str;
-use std::{borrow::Cow, fmt::Debug, slice::SliceIndex};
+use std::{
+    borrow::Cow,
+    fmt::{Debug, Display},
+    slice::SliceIndex,
+};
 
 use logos::Skip;
 pub use logos::{Logos, Span, SpannedIter};
@@ -396,9 +400,15 @@ fn accept_operator(lex: &mut Lexer<'_>) {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Slice<'a>(Cow<'a, [u8]>);
 
+impl Display for Slice<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", String::from_utf8_lossy(&self.0).as_ref())
+    }
+}
+
 impl Debug for Slice<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", String::from_utf8_lossy(&self.0).as_ref())
+        write!(f, "\"{self}\"")
     }
 }
 
