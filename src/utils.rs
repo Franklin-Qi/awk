@@ -65,13 +65,15 @@ pub fn exit_with(res: Result<Option<impl Into<ExitCode>>, impl Display + Debug>)
     let code = match res {
         Ok(Some(x)) => x.into(),
         Ok(None) => EXIT_SUCCESS,
-        Err(e) => exit_err(e),
+        Err(e) => exit_err(Some(e)),
     };
 
     exit(code)
 }
 
-pub fn exit_err(err: impl Display + Debug) -> ! {
-    eprintln!("{err:?}");
+pub fn exit_err(err: Option<impl Display + Debug>) -> ! {
+    if let Some(err) = err {
+        eprintln!("{err}");
+    }
     exit(EXIT_FAILURE)
 }

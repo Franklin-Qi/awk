@@ -8,6 +8,8 @@
 mod cli;
 mod utils;
 
+use std::env::args_os;
+
 use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
@@ -20,14 +22,19 @@ use crate::{
 
 fn main() {
     if let Err(e) = ensure_consistent_panic(uu_main) {
-        exit_err(e)
+        exit_err(Some(e))
     }
 }
 
 #[tracing::instrument]
 fn uu_main() -> Result<()> {
-    let args = Args::parse();
-    println!("{args:?}");
+    let args = match Args::try_parse_from(args_os()) {
+        Ok(args) => args,
+        Err(msg) => {
+            msg.print()?;
+            exit_err(Option::<&str>::None)
+        }
+    };
 
     let arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
     let mut parser = Parser::new(&arena);
@@ -38,7 +45,7 @@ fn uu_main() -> Result<()> {
             return Ok(());
         }
     };
-    println!("{ast}");
+    println!("---\n{ast}");
     dbg!(arena.chunk_capacity());
 
     // for token in lex {
