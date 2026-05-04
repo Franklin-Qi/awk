@@ -3,8 +3,8 @@ use std::fmt::{Debug, Display, Formatter, Result, Write};
 use crate::{
     Ast, Function,
     ast::{
-        Atom, BinaryOperator, BindingPower, Body, Command, Expr, ExprNode, PlaceOperator, Rule,
-        RulePattern, Statement, Ternary, UnaryOperator,
+        Atom, BinaryOperator, BindingPower, Body, Command, Expr, ExprNode, Getline, PlaceOperator,
+        Rule, RulePattern, Statement, Ternary, UnaryOperator,
     },
 };
 
@@ -173,6 +173,10 @@ impl Display for Statement<'_> {
             Self::Continue => write!(f, "continue"),
             Self::Return(Some(expr)) => write!(f, "return {expr:ew$}"),
             Self::Return(None) => write!(f, "return"),
+            Self::Exit(Some(expr)) => write!(f, "exit {expr:ew$}"),
+            Self::Exit(None) => write!(f, "exit"),
+            Self::Next => write!(f, "next"),
+            Self::NextFile => write!(f, "nextfile"),
         }
     }
 }
@@ -226,7 +230,6 @@ impl Display for ExprNode<'_> {
                 write_args(f, args, indent)?;
                 write!(f, ")")
             }
-
             Self::UnaryOperation(op, x) => {
                 let bp = op.binding_power();
                 let child_w = encode(indent, bp.saturating_add(1));
@@ -236,7 +239,6 @@ impl Display for ExprNode<'_> {
                     write!(f, "{op}{x:child_w$}")
                 }
             }
-
             Self::BinaryOperation(op, a, b) => {
                 let (left_bp, right_bp) = op.binding_power();
                 let left_w = encode(indent, left_bp);
@@ -247,7 +249,6 @@ impl Display for ExprNode<'_> {
                     write!(f, "{a:left_w$}{op}{b:right_w$}")
                 }
             }
-
             Self::PlaceOperation(op, place, idx) => {
                 let (left_bp, right_bp) = op.binding_power();
                 if op == &PlaceOperator::ArrayAccess {
@@ -266,7 +267,6 @@ impl Display for ExprNode<'_> {
                     }
                 }
             }
-
             Self::Ternary(cond, then_expr, else_expr) => {
                 let ternary_bp = Ternary.binding_power().0;
                 let inner_w = encode(indent, 0);
@@ -282,6 +282,13 @@ impl Display for ExprNode<'_> {
                     )
                 }
             }
+            Self::Getline(getline) => match getline {
+                Getline::FromInput(Some(var)) => write!(f, "getline {var:?}"),
+                Getline::FromInput(None) => write!(f, "getline"),
+                Getline::FromFile(Some(var), file) => write!(f, "getline {var:?} < {file}"),
+                Getline::FromFile(None, file) => write!(f, "getline < {file}"),
+                _ => todo!(),
+            },
         }
     }
 }
@@ -336,10 +343,6 @@ impl Display for Command {
         match self {
             Self::Print => write!(f, "print"),
             Self::Printf => write!(f, "printf"),
-            Self::Getline => write!(f, "getline"),
-            Self::Next => write!(f, "next"),
-            Self::NextFile => write!(f, "nextfile"),
-            Self::Exit => write!(f, "exit"),
         }
     }
 }

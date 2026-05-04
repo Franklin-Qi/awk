@@ -23,7 +23,7 @@ pub use crate::ast::Ast;
 pub use crate::lex::Lexer;
 use crate::{
     ast::{
-        Atom, BinaryOperator, BindingPower, Body, Command, CommandArity, Expr, ExprNode, Function,
+        Atom, BinaryOperator, BindingPower, Body, Command, Expr, ExprNode, Function, Getline,
         Identifier, Pattern, PlaceOperator, Rule, RulePattern, SpecialPattern, Statement, Ternary,
         UnaryOperator, Variable,
     },
@@ -352,6 +352,13 @@ impl<'a> Parser<'a> {
                         .then(|| self.parse_expression(lex))
                         .transpose()?,
                 ),
+                Token::Next => Statement::Next,
+                Token::NextFile => Statement::NextFile,
+                Token::Exit => Statement::Exit(
+                    (!lex.peek_with(Token::is_stmnt_or_block_end))
+                        .then(|| self.parse_expression(lex))
+                        .transpose()?,
+                ),
                 a => todo!("{a:?}"),
             }
         };
@@ -416,25 +423,25 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_command(&mut self, lex: &mut Lexer<'a>, command: Command) -> Result<Statement<'a>> {
-        Ok(Statement::Command {
-            args: match command.arity() {
-                CommandArity::Nullary => vec![in self.arena],
-                // TODO: Handle missing argument.
-                CommandArity::Unary => {
-                    if lex.peek_with(Token::is_stmnt_or_block_end) {
-                        vec![in self.arena]
-                    } else {
-                        vec![in self.arena; self.parse_expression(lex)?]
-                    }
-                }
-
-                CommandArity::Variadic => {
-                    self.parse_arguments(lex, |t| t.is_stmnt_end() || t == &Token::ClosedBrace)?
-                }
-            },
+        let parent = lex.consume(&Token::OpenParent);
+        let command = Statement::Command {
             name: command,
+            args: self.parse_arguments(lex, |t| {
+                if parent {
+                    t == &Token::ClosedParent
+                } else {
+                    t.is_stmnt_end() || t == &Token::ClosedBrace
+                }
+            })?,
             redirection: None,
-        })
+        };
+        if parent {
+            lex.expect(
+                &Token::ClosedParent,
+                ParsingError::UnclosedParenthesisInStatement,
+            )?;
+        }
+        Ok(command)
     }
 
     /// Parses arguments to command or function calls; consumes to the end of
@@ -540,6 +547,24 @@ impl<'a> Parser<'a> {
             } else {
                 return Err(ParsingError::InvalidExpression(lex.span()));
             }
+        } else if lex.consume(&Token::Getline) {
+            // Consumes with maximum precedence the following ident and/or
+            // redirection reading from file.
+            // let var = self.get_place(lex, lex)
+            let var = if lex.peek_with(Token::is_place) {
+                let next = lex.expect_next()?;
+                self.get_place(lex, next)
+            } else {
+                None
+            };
+            if lex.consume(&Token::LesserThan) {
+                Expr::node(
+                    Getline::FromFile(var, self.parse_expression(lex)?),
+                    self.arena,
+                )
+            } else {
+                Expr::node(Getline::FromInput(var), self.arena)
+            }
         } else {
             let next = lex.expect_next()?;
             if let Token::Identifier(name) = next
@@ -634,6 +659,13 @@ impl<'a> Parser<'a> {
                     ),
                     self.arena,
                 );
+            } else if matches!(next, Token::Pipe | Token::DoublePipe) {
+                lex.expect(&Token::Getline, |span| {
+                    ParsingError::UnexpectedToken(
+                        span,
+                        "operand must precede `getline` in an expression.".into(),
+                    )
+                })?;
             } else {
                 break;
             }
@@ -679,28 +711,38 @@ impl<'a> Parser<'a> {
             Token::Number(n) => Ok(Atom::Number(n)),
             Token::String(s) => Ok(Atom::String(s)),
             Token::Regex(r) => Ok(Atom::Regex(r)),
+            token => match self.get_place(lex, token) {
+                Some(var) => Ok(Atom::Variable(var)),
+                None => Err(ParsingError::UnexpectedToken(
+                    lex.span(),
+                    "is not valid data.".into(),
+                )),
+            },
+        }
+    }
+
+    #[tracing::instrument]
+    fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Option<Variable<'a>> {
+        match token {
             Token::Identifier(a) if !lex.peek_is(&Token::OpenParent) => {
-                Ok(Atom::Variable(a.qualify(self.namespace).into()))
+                Some(a.qualify(self.namespace).into())
             }
-            Token::NrVariable => Ok(Variable::Nr.into()),
-            Token::NfVariable => Ok(Variable::Nf.into()),
-            Token::FsVariable => Ok(Variable::Fs.into()),
-            Token::RsVariable => Ok(Variable::Rs.into()),
-            Token::OfsVariable => Ok(Variable::Ofs.into()),
-            Token::OrsVariable => Ok(Variable::Ors.into()),
-            Token::FilenameVariable => Ok(Variable::Filename.into()),
-            Token::ArgcVariable => Ok(Variable::Argc.into()),
-            Token::ArgvVariable => Ok(Variable::Argv.into()),
-            Token::SubsepVariable => Ok(Variable::Subsep.into()),
-            Token::FnrVariable => Ok(Variable::Fnr.into()),
-            Token::OfmtVariable => Ok(Variable::Ofmt.into()),
-            Token::RstartVariable => Ok(Variable::Rstart.into()),
-            Token::RlengthVariable => Ok(Variable::Rlength.into()),
-            Token::EnvironVariable => Ok(Variable::Environ.into()),
-            _ => Err(ParsingError::UnexpectedToken(
-                lex.span(),
-                "is not valid data.".into(),
-            )),
+            Token::NrVariable => Some(Variable::Nr),
+            Token::NfVariable => Some(Variable::Nf),
+            Token::FsVariable => Some(Variable::Fs),
+            Token::RsVariable => Some(Variable::Rs),
+            Token::OfsVariable => Some(Variable::Ofs),
+            Token::OrsVariable => Some(Variable::Ors),
+            Token::FilenameVariable => Some(Variable::Filename),
+            Token::ArgcVariable => Some(Variable::Argc),
+            Token::ArgvVariable => Some(Variable::Argv),
+            Token::SubsepVariable => Some(Variable::Subsep),
+            Token::FnrVariable => Some(Variable::Fnr),
+            Token::OfmtVariable => Some(Variable::Ofmt),
+            Token::RstartVariable => Some(Variable::Rstart),
+            Token::RlengthVariable => Some(Variable::Rlength),
+            Token::EnvironVariable => Some(Variable::Environ),
+            _ => None,
         }
     }
 }

@@ -98,6 +98,7 @@ pub enum ExprNode<'a> {
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     PlaceOperation(PlaceOperator, Variable<'a>, Expr<'a>),
     Ternary(Expr<'a>, Expr<'a>, Expr<'a>),
+    Getline(Getline<'a>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -149,6 +150,18 @@ pub enum Redirection<'a> {
     WriteVariable(),
 }
 
+#[derive(Debug, Clone)]
+pub enum Getline<'a> {
+    // getline (var)?
+    FromInput(Option<Variable<'a>>),
+    // getline (var)? < (file)
+    FromFile(Option<Variable<'a>>, Expr<'a>),
+    // (expr) | getline (var)?
+    PipeOut(Option<Variable<'a>>, Expr<'a>),
+    // (expr) |& getline (var)?
+    CoprocessOut(Option<Variable<'a>>, Expr<'a>),
+}
+
 #[derive(Clone)]
 pub enum Statement<'a> {
     Expression(Expr<'a>),
@@ -191,6 +204,9 @@ pub enum Statement<'a> {
     Break,
     Continue,
     Return(Option<Expr<'a>>),
+    Next,
+    NextFile,
+    Exit(Option<Expr<'a>>),
 }
 
 #[derive(Debug, Clone)]
@@ -203,27 +219,6 @@ pub struct Function<'a> {
 pub enum Command {
     Print,
     Printf,
-    Getline,
-    Next,
-    NextFile,
-    Exit,
-}
-
-#[derive(Debug, Clone)]
-pub enum CommandArity {
-    Nullary,
-    Unary,
-    Variadic,
-}
-
-impl Command {
-    pub fn arity(&self) -> CommandArity {
-        match self {
-            Self::Next | Self::NextFile => CommandArity::Nullary,
-            Self::Getline | Self::Exit => CommandArity::Unary,
-            Self::Print | Self::Printf => CommandArity::Variadic,
-        }
-    }
 }
 
 impl<'a> Expr<'a> {
@@ -231,8 +226,8 @@ impl<'a> Expr<'a> {
         Self::Leaf(from.into())
     }
 
-    pub fn node(op: ExprNode<'a>, arena: &'a Bump) -> Self {
-        Self::Node(arena.alloc(op))
+    pub fn node(op: impl Into<ExprNode<'a>>, arena: &'a Bump) -> Self {
+        Self::Node(arena.alloc(op.into()))
     }
 }
 
@@ -251,6 +246,12 @@ impl BinaryOperator {
 impl PlaceOperator {
     pub fn expr<'a>(self, a: Variable<'a>, b: Expr<'a>) -> ExprNode<'a> {
         ExprNode::PlaceOperation(self, a, b)
+    }
+}
+
+impl<'a> From<Getline<'a>> for ExprNode<'a> {
+    fn from(value: Getline<'a>) -> Self {
+        Self::Getline(value)
     }
 }
 
@@ -468,6 +469,16 @@ impl Debug for Expr<'_> {
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::PlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
+                ExprNode::Getline(getline) => match getline {
+                    Getline::FromInput(Some(a)) => write!(f, "(getline {a:?})"),
+                    Getline::FromInput(None) => write!(f, "(getline)"),
+                    Getline::FromFile(Some(a), b) => write!(f, "(getline< {b:?} {a:?})"),
+                    Getline::FromFile(None, b) => write!(f, "(getline< {b:?})"),
+                    Getline::PipeOut(Some(a), b) => write!(f, "(getline| {b:?} {a:?})"),
+                    Getline::PipeOut(None, b) => write!(f, "(getline| {b:?})"),
+                    Getline::CoprocessOut(Some(a), b) => write!(f, "(getline|& {b:?} {a:?})"),
+                    Getline::CoprocessOut(None, b) => write!(f, "(getline|& {b:?})"),
+                },
             },
         }
     }

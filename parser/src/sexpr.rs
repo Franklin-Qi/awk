@@ -155,6 +155,10 @@ impl Debug for Statement<'_> {
             Self::Break => write!(f, "(break)"),
             Self::Return(Some(expr)) => write!(f, "(return {expr:?})"),
             Self::Return(None) => write!(f, "(return)"),
+            Self::Exit(Some(expr)) => write!(f, "(exit {expr:?})"),
+            Self::Exit(None) => write!(f, "(exit)"),
+            Self::Next => write!(f, "(next)"),
+            Self::NextFile => write!(f, "(nextfile)"),
         }
     }
 }

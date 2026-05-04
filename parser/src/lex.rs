@@ -163,6 +163,7 @@ pub trait TokenExt {
     fn is_prefix_op(&self) -> bool;
     fn is_atom(&self) -> bool;
     fn is_expr_start(&self) -> bool;
+    fn is_place(&self) -> bool;
     fn is_pattern_start(&self) -> bool;
     fn maps_to_command(&self) -> Option<Command>;
     fn maps_to_special_pat(&self) -> Option<SpecialPattern>;
@@ -181,17 +182,21 @@ impl TokenExt for Token<'_> {
                 | Token::Negation
                 | Token::Minus
                 | Token::Plus
-                | Token::Getline
         )
     }
     fn is_atom(&self) -> bool {
+        matches!(self, Token::Number(_) | Token::String(_) | Token::Regex(_)) || self.is_place()
+    }
+    fn is_expr_start(&self) -> bool {
+        self.is_atom()
+            || self.is_prefix_op()
+            || self == &Token::OpenParent
+            || self == &Token::Getline
+    }
+    fn is_place(&self) -> bool {
         matches!(
             self,
-            Token::Number(_)
-                | Token::String(_)
-                | Token::Regex(_)
-                | Token::Identifier(_)
-                | Token::NrVariable
+            Token::NrVariable
                 | Token::NfVariable
                 | Token::FsVariable
                 | Token::RsVariable
@@ -206,10 +211,8 @@ impl TokenExt for Token<'_> {
                 | Token::RstartVariable
                 | Token::RlengthVariable
                 | Token::EnvironVariable
+                | Token::Identifier(_)
         )
-    }
-    fn is_expr_start(&self) -> bool {
-        self.is_atom() || self.is_prefix_op() || self == &Token::OpenParent
     }
     fn is_pattern_start(&self) -> bool {
         self.is_expr_start() || self.maps_to_special_pat().is_some()
@@ -218,10 +221,6 @@ impl TokenExt for Token<'_> {
         match self {
             Token::Print => Some(Command::Print),
             Token::Printf => Some(Command::Printf),
-            Token::Getline => Some(Command::Getline),
-            Token::Next => Some(Command::Next),
-            Token::NextFile => Some(Command::NextFile),
-            Token::Exit => Some(Command::Exit),
             _ => None,
         }
     }

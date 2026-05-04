@@ -65,7 +65,7 @@ pub enum ParsingError {
 }
 
 impl ParsingError {
-    fn span(&self) -> Option<Span> {
+    pub fn span(&self) -> Option<Span> {
         match self {
             Self::LexingError(err) => match err {
                 LexingError::Unknown => panic!("Unknown lexing error!"),
