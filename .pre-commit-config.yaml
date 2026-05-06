@@ -37,6 +37,13 @@ repos:
         pass_filenames: false
         types: [file, rust]
         language: system
+      - id: cargo-lock-check
+        name: Cargo.lock sync check
+        description: Ensure Cargo.lock is up-to-date.
+        entry: cargo fetch --quiet --
+        pass_filenames: false
+        files: 'Cargo\.(toml|lock)$'
+        language: system
       - id: cspell
         name: Code spell checker (cspell)
         description: Run cspell to check for spelling errors (if available).
