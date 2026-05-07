@@ -6,19 +6,19 @@ This is a human, WIP, and clean implementation of an AWK interpreter, written in
 
 ### Lexer
 
-Pretty much done; it is lacking a POSIX-compatibility mode (trivial) and arena integration (trivial).
+Essentially done; it is only lacking thorough testing and numeric escapings (good first contribution).
 
 ### Parser
 
 Also mostly done; some bullet points:
 
 * Rough edges around error handling on expected tokens (remove `todo!()` and friends on a few error branches; trivial).
-* Extend spans during Pratt parsing for better errors (trivial-ish?).
-* The preprocessor is TBD.
+* Extend spans during Pratt parsing for better error messages (trivial-ish?).
+* The preprocessor is TBD (not complicated, but will tangle up pretty printing).
 * It would be nice to reduce LOC.
 * We are working on test coverage and fuzzing.
   * It's possible we move to the `chumsky` crate for this reason and `ariadne` support. I currently think it's not necessary, though; we probably are better suited to owning the parser given how idiosyncratic and ambiguous AWK's grammar is.
-* Start running awk parsing tests at some point (especially when we get a basic interpreter and nail down `--pretty-print`).
+* Start running gawk parsing tests at some point (especially when we get a basic interpreter and nail down `--pretty-print`).
 
 ### Interpreter
 
