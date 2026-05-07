@@ -12,7 +12,6 @@ Essentially done; it is only lacking thorough testing and numeric escapings (goo
 
 Also mostly done; some bullet points:
 
-* Rough edges around error handling on expected tokens (remove `todo!()` and friends on a few error branches; trivial).
 * Extend spans during Pratt parsing for better error messages (trivial-ish?).
 * The preprocessor is TBD (not complicated, but will tangle up pretty printing).
 * It would be nice to reduce LOC.
