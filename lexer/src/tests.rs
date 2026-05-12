@@ -153,17 +153,42 @@ fn lexer_test_directive_escaping() {
     assert_eq!(
         &lex(str, &arena, false, false),
         &[
-            Token::IncludeDirective(b"aa\"a\ta".into()),
-            Token::NsIncludeDirective(b"b\"\nb".into())
+            Token::IncludeDirective,
+            Token::String(b"aa\"a\ta".into()),
+            Token::NsIncludeDirective,
+            Token::String(b"b\"\nb".into())
         ]
     );
 }
 
 #[test]
-#[should_panic]
 fn lexer_test_ident_rules_non_posix() {
     let arena = Bump::new();
-    lex(b"@namespace \"1a\"; a::1a", &arena, false, false);
+    assert_eq!(
+        &lex(b"1a::a a::1a _a", &arena, false, false),
+        &[
+            Token::Number(1.),
+            Token::Identifier(Identifier {
+                namespace: Some("a"),
+                literal: "a"
+            }),
+            Token::Identifier(Identifier {
+                namespace: None,
+                literal: "a"
+            }),
+            Token::Colon,
+            Token::Colon,
+            Token::Number(1.),
+            Token::Identifier(Identifier {
+                namespace: None,
+                literal: "a"
+            }),
+            Token::Identifier(Identifier {
+                namespace: None,
+                literal: "_a"
+            })
+        ]
+    );
 }
 
 #[test]
@@ -186,7 +211,8 @@ fn lexer_test_general_tokens() {
         &lex(str, &arena, false, false),
         &[
             Token::Newline,
-            Token::LoadDirective(b"lib1.so.1".into()),
+            Token::LoadDirective,
+            Token::String(b"lib1.so.1".into()),
             Token::Newline,
             Token::BeginPattern,
             Token::OpenBrace,

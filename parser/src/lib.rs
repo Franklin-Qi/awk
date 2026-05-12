@@ -118,26 +118,30 @@ impl<'a> Parser<'a> {
                 });
             } else {
                 match lex.expect_next()? {
-                    Token::LoadDirective(lib) => {
+                    Token::LoadDirective => {
+                        let lib = lex.expect_string()?;
                         self.ast.loads.push(lib);
                         lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
                     }
-                    Token::IncludeDirective(path) => {
+                    Token::IncludeDirective => {
+                        let path = lex.expect_string()?;
                         let old_namespace = self.namespace;
                         let content = self.preprocessor.include_in(path.as_ref(), self.arena);
                         self.parse_top(&mut Lexer::new(content, self.arena), true)?;
                         lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
                         self.namespace = old_namespace;
                     }
-                    Token::NsIncludeDirective(path) => {
+                    Token::NsIncludeDirective => {
+                        let path = lex.expect_string()?;
                         let old_namespace = self.namespace;
                         let content = self.preprocessor.include_in(path.as_ref(), self.arena);
                         self.parse_top(&mut Lexer::new(content, self.arena), false)?;
                         lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
                         self.namespace = old_namespace;
                     }
-                    Token::NamespaceDirective(namespace) => {
-                        self.namespace = namespace;
+                    Token::NamespaceDirective => {
+                        let namespace = lex.expect_string()?;
+                        self.namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
                         lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
                     }
                     Token::ConcurrentDirective => {
@@ -551,7 +555,7 @@ impl<'a> Parser<'a> {
 
     fn parse_delete(&mut self, lex: &mut Lexer<'a>) -> Result<SimpleStatement<'a>> {
         let next = lex.expect_next()?;
-        let Some(var) = self.get_place(lex, next) else {
+        let Ok(var) = self.get_place(lex, next) else {
             return Err(ParsingError::OperatorExpectsVariable(lex.span()));
         };
         let index = if lex.consume(&Token::OpenBracket) {
@@ -603,9 +607,10 @@ impl<'a> Parser<'a> {
             args.push(name);
 
             if !lex.consume(&Token::Comma) {
-                lex.expect(&Token::ClosedParent, |s| {
-                    ParsingError::FunctionCallMissingParenthesis(s, name.to_string())
-                })?;
+                lex.expect(
+                    &Token::ClosedParent,
+                    ParsingError::FunctionCallMissingParenthesis,
+                )?;
                 break;
             }
         }
@@ -628,21 +633,21 @@ impl<'a> Parser<'a> {
         .push(rule);
     }
 
-    #[tracing::instrument]
     fn parse_function_call(
         &mut self,
         lex: &mut Lexer<'a>,
-        name: Identifier<'a>,
+        generate: impl FnOnce(Vec<'a, Expr<'a>>) -> ExprNode<'a>,
         span: Span,
     ) -> Result<Expr<'a>> {
         lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
         if lex.span().start != span.end {
             return Err(ParsingError::FunctionCallSeparatedIdent(span));
         }
-        let expr = ExprNode::FunctionCall(name, self.parse_function_args(lex)?);
-        lex.expect(&Token::ClosedParent, |s| {
-            ParsingError::FunctionCallMissingParenthesis(s, name.to_string())
-        })?;
+        let expr = generate(self.parse_function_args(lex)?);
+        lex.expect(
+            &Token::ClosedParent,
+            ParsingError::FunctionCallMissingParenthesis,
+        )?;
         Ok(Expr::node(expr, self.arena))
     }
 
@@ -660,8 +665,8 @@ impl<'a> Parser<'a> {
             Token::TypedRegex(r) if typed_regex => Ok(Atom::TypedRegex(r)),
             Token::TypedRegex(_) => Err(ParsingError::UnexpectedTypedRegex(lex.span())),
             token => match self.get_place(lex, token) {
-                Some(var) => Ok(Atom::Variable(var)),
-                None => Err(ParsingError::UnexpectedToken(
+                Ok(var) => Ok(Atom::Variable(var)),
+                Err(_) => Err(ParsingError::UnexpectedToken(
                     lex.span(),
                     "is not valid data.".into(),
                 )),
@@ -670,27 +675,27 @@ impl<'a> Parser<'a> {
     }
 
     #[tracing::instrument]
-    fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Option<Variable<'a>> {
+    fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Result<Variable<'a>, Token<'a>> {
         match token {
             Token::Identifier(a) if !(lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed()) => {
-                Some(a.qualify(self.namespace).into())
+                Ok(a.qualify(self.namespace).into())
             }
-            Token::NrVariable => Some(Variable::Nr),
-            Token::NfVariable => Some(Variable::Nf),
-            Token::FsVariable => Some(Variable::Fs),
-            Token::RsVariable => Some(Variable::Rs),
-            Token::OfsVariable => Some(Variable::Ofs),
-            Token::OrsVariable => Some(Variable::Ors),
-            Token::FilenameVariable => Some(Variable::Filename),
-            Token::ArgcVariable => Some(Variable::Argc),
-            Token::ArgvVariable => Some(Variable::Argv),
-            Token::SubsepVariable => Some(Variable::Subsep),
-            Token::FnrVariable => Some(Variable::Fnr),
-            Token::OfmtVariable => Some(Variable::Ofmt),
-            Token::RstartVariable => Some(Variable::Rstart),
-            Token::RlengthVariable => Some(Variable::Rlength),
-            Token::EnvironVariable => Some(Variable::Environ),
-            _ => None,
+            Token::NrVariable => Ok(Variable::Nr),
+            Token::NfVariable => Ok(Variable::Nf),
+            Token::FsVariable => Ok(Variable::Fs),
+            Token::RsVariable => Ok(Variable::Rs),
+            Token::OfsVariable => Ok(Variable::Ofs),
+            Token::OrsVariable => Ok(Variable::Ors),
+            Token::FilenameVariable => Ok(Variable::Filename),
+            Token::ArgcVariable => Ok(Variable::Argc),
+            Token::ArgvVariable => Ok(Variable::Argv),
+            Token::SubsepVariable => Ok(Variable::Subsep),
+            Token::FnrVariable => Ok(Variable::Fnr),
+            Token::OfmtVariable => Ok(Variable::Ofmt),
+            Token::RstartVariable => Ok(Variable::Rstart),
+            Token::RlengthVariable => Ok(Variable::Rlength),
+            Token::EnvironVariable => Ok(Variable::Environ),
+            tok => Err(tok),
         }
     }
 }

@@ -6,12 +6,14 @@
 use std::{fmt::Debug, iter::Peekable};
 
 use bumpalo::Bump;
-use lexer::{LexingError, Span, SpannedIter, Token};
+use lexer::{Identifier, LexingError, Slice, Span, SpannedIter, Token};
 
 use crate::{
     ParsingError,
     ast::{Command, SpecialPattern},
 };
+
+use super::Result;
 
 pub struct Lexer<'a> {
     inner: Peekable<SpannedIter<'a, Token<'a>>>,
@@ -48,7 +50,7 @@ impl<'a> Lexer<'a> {
         &mut self,
         expected: &Token,
         err: impl FnOnce(Span) -> ParsingError,
-    ) -> super::Result<Token<'a>> {
+    ) -> Result<Token<'a>> {
         match self.next() {
             Some(Ok(tok)) if expected == &tok => Ok(tok),
             Some(Ok(_)) => Err(err(self.span())),
@@ -61,7 +63,7 @@ impl<'a> Lexer<'a> {
         &mut self,
         expected: impl FnOnce(&Token<'a>) -> bool,
         msg: String,
-    ) -> super::Result<Token<'a>> {
+    ) -> Result<Token<'a>> {
         match self.next() {
             Some(Ok(tok)) if expected(&tok) => Ok(tok),
             Some(Ok(_)) => Err(ParsingError::UnexpectedToken(self.span(), msg)),
@@ -70,7 +72,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn expect_identifier(&mut self) -> super::Result<lexer::Identifier<'a>> {
+    pub fn expect_identifier(&mut self) -> Result<Identifier<'a>> {
         if let Some(Token::Identifier(ident)) =
             self.next_if(|t| matches!(t, Token::Identifier(_)))?
         {
@@ -81,6 +83,28 @@ impl<'a> Lexer<'a> {
                 "expected an identifier.".into(),
             ))
         }
+    }
+
+    pub fn expect_string(&mut self) -> Result<Slice<'a>> {
+        if let Some(Token::String(string)) = self.next_if(|t| matches!(t, Token::String(_)))? {
+            Ok(string)
+        } else {
+            Err(ParsingError::UnexpectedToken(
+                self.peeked_span().unwrap_or(self.span()),
+                "expected a string".into(),
+            ))
+        }
+    }
+
+    pub fn lex_ident(&self, source: &[u8], arena: &'a Bump) -> Result<&'a str> {
+        let Some(Ok(Token::Identifier(ident))) = Token::lex(source, arena, false, true).next()
+        else {
+            return Err(ParsingError::UnexpectedToken(
+                self.span().start + 1..self.span().end - 1,
+                "expected a valid, non-qualified identifier.".into(),
+            ));
+        };
+        Ok(arena.alloc_str(ident.literal))
     }
 
     pub fn consume(&mut self, token: &Token) -> bool {
@@ -113,7 +137,7 @@ impl<'a> Lexer<'a> {
         self.advance_span(next).transpose()
     }
 
-    pub fn expect_next(&mut self) -> super::Result<Token<'a>> {
+    pub fn expect_next(&mut self) -> Result<Token<'a>> {
         match self.next() {
             None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
             Some(Ok(tok)) => Ok(tok),
@@ -121,7 +145,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn expect_peek(&mut self) -> super::Result<&Token<'a>> {
+    pub fn expect_peek(&mut self) -> Result<&Token<'a>> {
         match self.peek() {
             None => Err(ParsingError::LexingError(LexingError::UnexpectedEof)),
             Some(Ok(tok)) => Ok(tok),
@@ -133,14 +157,14 @@ impl<'a> Lexer<'a> {
         self.span.clone()
     }
 
-    pub fn peeked_span(&mut self) -> super::Result<Span> {
+    pub fn peeked_span(&mut self) -> Result<Span> {
         self.inner
             .peek()
             .map(|(_, s)| s.clone())
             .ok_or(ParsingError::LexingError(LexingError::UnexpectedEof))
     }
 
-    pub fn peek_with_span(&mut self) -> Option<(super::Result<&Token<'a>>, Span)> {
+    pub fn peek_with_span(&mut self) -> Option<(Result<&Token<'a>>, Span)> {
         self.inner.peek().map(|(a, b)| {
             (
                 a.as_ref().map_err(|e| ParsingError::LexingError(e.clone())),
@@ -202,8 +226,10 @@ impl TokenExt for Token<'_> {
     fn is_expr_start(&self) -> bool {
         self.is_atom()
             || self.is_prefix_op()
-            || self == &Token::OpenParent
-            || self == &Token::Getline
+            || matches!(
+                self,
+                Token::IndirectCall(_) | Token::Getline | Token::OpenParent
+            )
     }
     fn is_place(&self) -> bool {
         matches!(

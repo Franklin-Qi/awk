@@ -53,8 +53,8 @@ pub enum ParsingError {
     InvalidExpression(Span, String),
     #[error("Missing alternate branch in ternary expression.")]
     MissingTernaryOr(Span),
-    #[error("Missing closing parenthesis in function call to `{}`.", .1)]
-    FunctionCallMissingParenthesis(Span, String),
+    #[error("Missing closing parenthesis in function call.")]
+    FunctionCallMissingParenthesis(Span),
     #[error("Functions calls must have their name yuxtaposed to the parenthesis `(`.")]
     FunctionCallSeparatedIdent(Span),
     #[error("Missing closing parenthesis `(` in function call to `{}`.", .1)]
@@ -69,6 +69,10 @@ pub enum ParsingError {
     ExpectedPlaceOperator(Span),
     #[error("Typed regular expressions not accepted in this position.")]
     UnexpectedTypedRegex(Span),
+    #[error("Can't call non-function, special variable `{}`.", .1)]
+    SpecialVariableCall(Span, String),
+    #[error("Can't use special variable `{}` for indirect function call.", .1)]
+    SpecialVariableIndirectCall(Span, String),
 }
 
 impl ParsingError {
@@ -104,7 +108,7 @@ impl ParsingError {
             Self::OperatorExpectsVariable(span) => Some(span.clone()),
             Self::InvalidExpression(span, _) => Some(span.clone()),
             Self::MissingTernaryOr(span) => Some(span.clone()),
-            Self::FunctionCallMissingParenthesis(span, _) => Some(span.clone()),
+            Self::FunctionCallMissingParenthesis(span) => Some(span.clone()),
             Self::FunctionCallSeparatedIdent(span) => Some(span.clone()),
             Self::FunctionCallUnclosed(span, _) => Some(span.clone()),
             Self::ExpectedIdentifier(span) => Some(span.clone()),
@@ -112,6 +116,8 @@ impl ParsingError {
             Self::ExpectedBinaryOperator(span) => Some(span.clone()),
             Self::ExpectedPlaceOperator(span) => Some(span.clone()),
             Self::UnexpectedTypedRegex(span) => Some(span.clone()),
+            Self::SpecialVariableCall(span, _) => Some(span.clone()),
+            Self::SpecialVariableIndirectCall(span, _) => Some(span.clone()),
         }
     }
     fn hint(&self) -> Option<&'static str> {

@@ -177,8 +177,38 @@ impl<'a, 'b> Pratt<'a, 'b> {
             && lex.peek_is(&Token::OpenParent)
             && lex.is_yuxtaposed()
         {
-            self.parser
-                .parse_function_call(lex, name.qualify(self.parser.namespace), lex.span())
+            if name.namespace.is_none_or(|n| n == "awk") && is_special_var(name.literal) {
+                return Err(ParsingError::SpecialVariableCall(
+                    lex.span(),
+                    name.literal.to_string(),
+                ));
+            }
+            self.parser.parse_function_call(
+                lex,
+                |args| ExprNode::FunctionCall(name.qualify(self.parser.namespace), args),
+                lex.span(),
+            )
+        } else if let Token::IndirectCall(name) = next {
+            // Possible gawk bug: it accepts special variables if qualified,
+            // even if it is with the `awk` namespace.
+            if name.namespace.is_none() && is_special_var(name.literal) {
+                return Err(ParsingError::SpecialVariableIndirectCall(
+                    lex.span(),
+                    name.literal.to_string(),
+                ));
+            }
+            let name = Variable::User(name.qualify(self.parser.namespace));
+            self.parser.parse_function_call(
+                lex,
+                |args| ExprNode::IndirectCall(name, args),
+                lex.span(),
+            )
+        } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed() {
+            let name = match self.parser.get_place(lex, next) {
+                Ok(var) => var.to_string(),
+                Err(tok) => format!("{tok:?}"),
+            };
+            Err(ParsingError::SpecialVariableCall(lex.span(), name))
         } else {
             match self.parser.parse_atom(lex, next, self.typed_regex) {
                 Ok(atom) => Ok(Expr::leaf(atom)),
@@ -320,4 +350,25 @@ impl<'a, 'b> Pratt<'a, 'b> {
             Ok(())
         }
     }
+}
+
+fn is_special_var(name: &str) -> bool {
+    matches!(
+        name,
+        "NR" | "NF"
+            | "FS"
+            | "RS"
+            | "OFS"
+            | "ORS"
+            | "FILENAME"
+            | "ARGC"
+            | "ARGV"
+            | "SUBSEP"
+            | "FNR"
+            | "ARGIND"
+            | "OFMT"
+            | "RSTART"
+            | "RLENGTH"
+            | "ENVIRON"
+    )
 }

@@ -47,14 +47,14 @@ pub enum Token<'a> {
     BeginFilePattern,
     #[token("ENDFILE", |lex| parse_non_posix_keyword(lex, Token::EndFilePattern))]
     EndFilePattern,
-    #[token("@load \"", parse_directive)]
-    LoadDirective(Slice<'a>),
-    #[token("@include \"", parse_directive)]
-    IncludeDirective(Slice<'a>),
-    #[token("@nsinclude \"", parse_non_posix_directive)]
-    NsIncludeDirective(Slice<'a>),
-    #[regex("@namespace \"(?&identifier)\"", parse_namespace_directive)]
-    NamespaceDirective(&'a str),
+    #[token("@load")]
+    LoadDirective,
+    #[token("@include")]
+    IncludeDirective,
+    #[token("@nsinclude", parse_non_posix_operator)]
+    NsIncludeDirective,
+    #[regex("@namespace", parse_non_posix_operator)]
+    NamespaceDirective,
     #[token("@concurrent", parse_non_gnu_operator)]
     ConcurrentDirective,
     #[token("if", accept_expression)]
@@ -130,9 +130,12 @@ pub enum Token<'a> {
     RlengthVariable,
     #[token("ENVIRON", accept_expression)]
     EnvironVariable,
-    #[regex("(?&identifier)", Identifier::without_namespace)]
-    #[regex(r"(?&identifier)::(?&identifier)", Identifier::with_namespace)]
+    #[regex("(?&identifier)", Identifier::without_namespace::<0>)]
+    #[regex(r"(?&identifier)::(?&identifier)", Identifier::with_namespace::<0>)]
     Identifier(Identifier<'a>),
+    #[regex("@(?&identifier)", parse_indirect_call::<false>)]
+    #[regex(r"@(?&identifier)::(?&identifier)", parse_indirect_call::<true>)]
+    IndirectCall(Identifier<'a>),
     #[token("+", accept_expression)]
     Plus,
     #[token("-", accept_expression)]
@@ -333,29 +336,6 @@ fn parse_regex_or_op<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<Token<
     }
 }
 
-fn parse_directive<'a>(lex: &mut Lexer<'a>) -> Result<Slice<'a>> {
-    accept_expression(lex);
-    parse_content::<false, '"'>(lex)
-}
-
-fn parse_non_posix_directive<'a>(lex: &mut Lexer<'a>) -> Result<Slice<'a>> {
-    if lex.extras.posix_strict {
-        Err(LexingError::non_posix(lex))
-    } else {
-        parse_directive(lex)
-    }
-}
-
-fn parse_namespace_directive<'a>(lex: &mut Lexer<'a>) -> Result<&'a str> {
-    if lex.extras.posix_strict {
-        Err(LexingError::non_posix(lex))
-    } else {
-        accept_expression(lex);
-        let offset = "@namespace \"".len();
-        Ok(parse_ident(lex, offset..lex.slice().len() - 1))
-    }
-}
-
 fn parse_content<'a, const REGEX: bool, const DELIMITER: char>(
     lex: &mut Lexer<'a>,
 ) -> Result<Slice<'a>> {
@@ -456,7 +436,7 @@ fn parse_float(lex: &mut Lexer<'_>) -> f64 {
 
 fn parse_non_posix_keyword<'a>(lex: &mut Lexer<'a>, other: Token<'a>) -> Token<'a> {
     if lex.extras.posix_strict {
-        Token::Identifier(Identifier::without_namespace(lex))
+        Token::Identifier(Identifier::without_namespace::<0>(lex))
     } else {
         accept_expression(lex);
         other
@@ -481,22 +461,32 @@ fn parse_non_gnu_operator(lex: &mut Lexer<'_>) -> Result<()> {
     }
 }
 
+fn parse_indirect_call<'a, const QUALIFIED: bool>(lex: &mut Lexer<'a>) -> Result<Identifier<'a>> {
+    if lex.extras.posix_strict {
+        Err(LexingError::non_posix(lex))
+    } else if QUALIFIED {
+        Identifier::with_namespace::<1>(lex)
+    } else {
+        Ok(Identifier::without_namespace::<1>(lex))
+    }
+}
+
 impl<'a> Identifier<'a> {
-    fn without_namespace(lex: &mut Lexer<'a>) -> Self {
+    fn without_namespace<const SKIP: usize>(lex: &mut Lexer<'a>) -> Self {
         Self {
             namespace: None,
-            literal: parse_ident(lex, ..),
+            literal: parse_ident(lex, SKIP..),
         }
     }
 
-    fn with_namespace(lex: &mut Lexer<'a>) -> Result<Self> {
+    fn with_namespace<const SKIP: usize>(lex: &mut Lexer<'a>) -> Result<Self> {
         if lex.extras.posix_strict {
             Err(LexingError::non_posix(lex))
         } else {
             // SAFETY: The regex matching ensures it is present and well-formed.
             let separator = unsafe { memchr(b':', lex.slice()).unwrap_unchecked() };
             Ok(Self {
-                namespace: Some(parse_ident(lex, ..separator)),
+                namespace: Some(parse_ident(lex, SKIP..separator)),
                 literal: parse_ident(lex, separator + 2..),
             })
         }

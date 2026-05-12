@@ -277,6 +277,11 @@ impl Display for ExprNode<'_> {
                 write_args(f, args, indent)?;
                 write!(f, ")")
             }
+            Self::IndirectCall(var, args) => {
+                write!(f, "@{var}(")?;
+                write_args(f, args, indent)?;
+                write!(f, ")")
+            }
             Self::UnaryOperation(op, x) => {
                 let bp = op.binding_power();
                 let child_w = encode(indent, bp.saturating_add(1));

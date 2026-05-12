@@ -93,6 +93,7 @@ pub type Pattern<'a> = Either<RulePattern<'a>, SpecialPattern>;
 #[derive(Debug)]
 pub enum ExprNode<'a> {
     FunctionCall(Identifier<'a>, Vec<'a, Expr<'a>>),
+    IndirectCall(Variable<'a>, Vec<'a, Expr<'a>>),
     UnaryOperation(UnaryOperator, Expr<'a>),
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
@@ -551,6 +552,13 @@ impl Debug for Expr<'_> {
             Self::Node(expr) => match expr.as_ref() {
                 ExprNode::FunctionCall(ident, args) => {
                     write!(f, "({ident:?}")?;
+                    for arg in args {
+                        write!(f, " {arg:?}")?;
+                    }
+                    write!(f, ")")
+                }
+                ExprNode::IndirectCall(ident, args) => {
+                    write!(f, "(@{ident:?}")?;
                     for arg in args {
                         write!(f, " {arg:?}")?;
                     }
