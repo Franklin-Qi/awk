@@ -179,3 +179,38 @@ fn test_parser_valid_patterns() {
 fn test_parser_invalid_patterns() {
     test_parser!(is_err!("BEGIN", "END", "BEGINFILE", "ENDFILE", "print 1;"));
 }
+
+#[test]
+fn test_parser_non_assoc() {
+    test_parser!(is_err!(
+        "a == b == c",
+        "a != b != c",
+        "a > b > c",
+        "a < b < c",
+        "a >= b >= c",
+        "a <= b <= c"
+    ));
+}
+
+#[test]
+fn test_parser_relaxed_assignments() {
+    let source = "
+        { 1 + 0 && x = 1 }
+        { y = @/a/ ? b : c }
+        { 1 + 0 || z = @/a/ ? b : c }
+        { 1 + 0 || z = /a/ && b || c }
+    ";
+    test_parser!(
+        source => {
+            rules: [
+                (None, Some("(body (And (Add 1 0) (Assignment awk::x 1)))")),
+                (None, Some("(body (?: (Assignment awk::y @/a/) awk::b awk::c))")),
+                (None, Some("(body (?: (Or (Add 1 0) (Assignment awk::z @/a/)) awk::b awk::c))")),
+                (
+                    None,
+                    Some("(body (Or (Add 1 0) (Assignment awk::z (Or (And /a/ awk::b) awk::c))))"),
+                ),
+            ],
+        }
+    );
+}

@@ -265,7 +265,7 @@ impl Debug for Atom<'_> {
 impl Debug for Place<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Self::Record(expr) => write!(f, "($ {expr:?})"),
+            Self::Record(expr) => write!(f, "(Record {expr:?})"),
             Self::Variable(var) => <_ as Debug>::fmt(var, f),
             Self::ArrayElement(var, index) => write!(f, "(index {var:?} {index:?})"),
         }
