@@ -78,10 +78,19 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 let place = Place::lower_from(lhs.take(), lex.span())?;
                 Expr::node(op.expr(place), self.parser.arena)
             } else if let Ok(op) = BinaryPlaceOperator::parse(next, &span) {
-                if op.binding_power().0 < min_bp {
-                    break;
-                }
-                let place = Place::lower_from(lhs.take(), lex.span())?;
+                // Places consume assignment operators with maximum precedence;
+                // effectively ignoring the enclosing operator's precedence.
+                // For example, `1 && x = 1` parses as `1 && (x = 1)`.
+                let place = match Place::lower_from(lhs.take(), lex.span()) {
+                    Ok(x) => x,
+                    Err((expr, _)) => {
+                        lhs = expr;
+                        if op.binding_power().0 < min_bp {
+                            break;
+                        }
+                        return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+                    }
+                };
                 self.parse_place_op(lex, op, place)?
             } else if let Ok(op) = BinaryOperator::parse(next, &span)
                 && !matches!(next, Token::Increment | Token::Decrement)
