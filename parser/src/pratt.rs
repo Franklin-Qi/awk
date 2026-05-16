@@ -45,7 +45,8 @@ impl<'a, 'b> Pratt<'a, 'b> {
         } else if lex.consume(&Token::Getline) {
             self.parse_prefix_getline(lex)
         } else {
-            self.parse_atom_or_call(lex)
+            let next = lex.expect_next()?;
+            self.parse_atom_or_call(lex, next)
         }
     }
 
@@ -139,11 +140,8 @@ impl<'a, 'b> Pratt<'a, 'b> {
         // No prefix operator accepts them.
         self.typed_regex = false;
         if let Ok(op) = UnaryPlaceOperator::parse_prefix(&next, &lex.span()) {
-            let rhs = self.parse_expression(lex, op.binding_power())?;
-            Ok(Expr::node(
-                op.expr(Place::lower_from(rhs, lex.span())?),
-                self.parser.arena,
-            ))
+            let rhs = self.parse_place(lex)?;
+            Ok(Expr::node(op.expr(rhs), self.parser.arena))
         } else if let Ok(op) = UnaryOperator::parse(&next, &lex.peeked_span()?) {
             let rhs = self.parse_expression(lex, op.binding_power())?;
             Ok(Expr::node(op.expr(rhs), self.parser.arena))
@@ -184,8 +182,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         }
     }
 
-    fn parse_atom_or_call(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
-        let next = lex.expect_next()?;
+    fn parse_atom_or_call(&mut self, lex: &mut Lexer<'a>, next: Token<'a>) -> Result<Expr<'a>> {
         // Only accepts calls if the function name is next to the parenthesis.
         // If there is a space, we interpret it as a concatenation and let the
         // interpreter error if necessary; elsewhere we can't concat with vars.
@@ -297,7 +294,47 @@ impl<'a, 'b> Pratt<'a, 'b> {
         Ok(Expr::node(op.expr(place, rhs), self.parser.arena))
     }
 
-    /// Continuously
+    /// Parses a given place/value receiver/lvalue. These are non-parenthesized
+    /// identifiers, array accesses, and records. This functions ensures parsing
+    /// is non-greedy.
+    fn parse_place(&mut self, lex: &mut Lexer<'a>) -> Result<Place<'a>> {
+        let start = lex.peeked_span()?.start;
+        let lhs = match lex.expect_peek()? {
+            Token::Record => {
+                lex.next();
+                return self
+                    .parse_expression(lex, UnaryOperator::Record.binding_power())
+                    .map(Place::Record);
+            }
+            Token::OpenParent => {
+                // advance expression for nicer errors
+                let _ = self.parse_expression(lex, 0);
+                Expr::Leaf(Atom::Number(0.))
+            }
+            tok if tok.is_place() => {
+                let expr = self.parse_lhs(lex)?;
+                if lex.consume(&Token::OpenBracket) {
+                    let Expr::Leaf(Atom::Variable(var)) = expr else {
+                        return Err(ParsingError::OperatorExpectsVariable(start..lex.span().end));
+                    };
+                    let mut index = self.parse_expression(
+                        lex,
+                        BinaryPlaceOperator::ArrayAccess.binding_power().1,
+                    )?;
+                    index = self.parse_array_index(lex, index)?;
+                    return Ok(Place::ArrayElement(var, index));
+                }
+                expr
+            }
+            _ => {
+                lex.next();
+                Expr::Leaf(Atom::Number(0.)) // force error below
+            }
+        };
+        Place::lower_from(lhs, start..lex.span().end).map_err(Into::into)
+    }
+
+    /// Continuously consumes comma-separated expressions.
     pub fn parse_array_index(&mut self, lex: &mut Lexer<'a>, lhs: Expr<'a>) -> Result<Expr<'a>> {
         let mut rhs = lhs;
         while lex.consume(&Token::Comma) {
