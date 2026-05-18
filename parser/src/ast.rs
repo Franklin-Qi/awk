@@ -97,6 +97,7 @@ pub enum ExprNode<'a> {
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
     UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
     BinaryPlaceOperation(BinaryPlaceOperator, Place<'a>, Expr<'a>),
+    ArrayOperation(ArrayOperator, Variable<'a>, Vec<'a, Expr<'a>>),
     Ternary(Expr<'a>, Expr<'a>, Expr<'a>),
     Getline(Getline<'a>),
 }
@@ -147,8 +148,12 @@ pub enum BinaryPlaceOperator {
     DivAssign,
     PowAssign,
     ModAssign,
-    ArrayAccess,
-    InArray,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ArrayOperator {
+    Index,
+    In,
 }
 
 /// Essentially lvalues. To the interpreter, these do not produce a value, but
@@ -156,7 +161,7 @@ pub enum BinaryPlaceOperator {
 pub enum Place<'a> {
     Record(Expr<'a>),
     Variable(Variable<'a>),
-    ArrayElement(Variable<'a>, Expr<'a>),
+    Index(Variable<'a>, Vec<'a, Expr<'a>>),
 }
 
 /// GNU docs: https://www.gnu.org/software/gawk/manual/html_node/Redirection.html
@@ -232,7 +237,7 @@ pub enum SimpleStatement<'a> {
         args: Vec<'a, Expr<'a>>,
         redirection: Option<(Redirection, Expr<'a>)>,
     },
-    Delete(Variable<'a>, Option<Expr<'a>>),
+    Delete(Variable<'a>, Option<Vec<'a, Expr<'a>>>),
 }
 
 #[derive(Debug)]
@@ -278,6 +283,12 @@ impl UnaryPlaceOperator {
 impl BinaryPlaceOperator {
     pub fn expr<'a>(self, a: Place<'a>, b: Expr<'a>) -> ExprNode<'a> {
         ExprNode::BinaryPlaceOperation(self, a, b)
+    }
+}
+
+impl ArrayOperator {
+    pub fn expr<'a>(self, a: Variable<'a>, b: Vec<'a, Expr<'a>>) -> ExprNode<'a> {
+        ExprNode::ArrayOperation(self, a, b)
     }
 }
 
@@ -387,11 +398,22 @@ impl<'a> BinaryPlaceOperator {
             Token::SlashAssign => Ok(Self::DivAssign),
             Token::CaretAssign => Ok(Self::PowAssign),
             Token::PercentAssign => Ok(Self::ModAssign),
-            Token::OpenBracket => Ok(Self::ArrayAccess),
-            Token::In => Ok(Self::InArray),
             _ => Err(ParsingError::UnexpectedToken(
                 span.clone(),
                 "expected a place operator.".into(),
+            )),
+        }
+    }
+}
+
+impl<'a> ArrayOperator {
+    pub fn parse(value: &Token<'a>, span: &Span) -> Result<Self> {
+        match value {
+            Token::OpenBracket => Ok(Self::Index),
+            Token::In => Ok(Self::In),
+            _ => Err(ParsingError::UnexpectedToken(
+                span.clone(),
+                "expected an array operator.".into(),
             )),
         }
     }
@@ -406,18 +428,12 @@ impl<'a> Place<'a> {
                 if matches!(
                     &*node,
                     &ExprNode::UnaryOperation(UnaryOperator::Record, _)
-                        | &ExprNode::BinaryPlaceOperation(
-                            BinaryPlaceOperator::ArrayAccess,
-                            Place::Variable(_),
-                            _
-                        )
+                        | &ExprNode::ArrayOperation(ArrayOperator::Index, _, _)
                 ) =>
             {
                 match Box::into_inner(node) {
                     ExprNode::UnaryOperation(_, index) => Ok(Self::Record(index)),
-                    ExprNode::BinaryPlaceOperation(_, Place::Variable(var), index) => {
-                        Ok(Self::ArrayElement(var, index))
-                    }
+                    ExprNode::ArrayOperation(_, var, index) => Ok(Self::Index(var, index)),
                     _ => unreachable!("Box is magic; handled awkwardly in the match guard."),
                 }
             }
@@ -511,10 +527,16 @@ impl BindingPower for UnaryPlaceOperator {
 impl BindingPower for BinaryPlaceOperator {
     type Bp = (u8, u8);
     fn binding_power(&self) -> Self::Bp {
+        binding_powers::BP_ASSIGN
+    }
+}
+
+impl BindingPower for ArrayOperator {
+    type Bp = (u8, u8);
+    fn binding_power(&self) -> Self::Bp {
         match self {
-            Self::ArrayAccess => (binding_powers::BP_GROUPING, 0),
-            Self::InArray => binding_powers::BP_IN,
-            _ => binding_powers::BP_ASSIGN,
+            Self::Index => (binding_powers::BP_GROUPING, 0),
+            Self::In => binding_powers::BP_IN,
         }
     }
 }

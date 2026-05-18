@@ -3,13 +3,15 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
+use bumpalo::{collections::Vec, vec};
 use lexer::Token;
 
 use crate::{
     IdentifierExt, Lexer, Parser, Result,
     ast::{
-        Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Expr, ExprNode, Getline, Place,
-        Redirection, Ternary, UnaryOperator, UnaryPlaceOperator, Variable, WriteKind,
+        ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Expr, ExprNode,
+        Getline, Place, Redirection, Ternary, UnaryOperator, UnaryPlaceOperator, Variable,
+        WriteKind,
     },
     diagnostics::ParsingError,
     lex::TokenExt,
@@ -100,6 +102,37 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     }
                 };
                 self.parse_place_op(lex, op, place)?
+            } else if let Ok(op) = ArrayOperator::parse(next, &span) {
+                match op {
+                    ArrayOperator::Index => {
+                        let place = match Place::lower_from(lhs.take(), lex.span()) {
+                            Ok(Place::Variable(var)) => var,
+                            Ok(_) => return Err(ParsingError::OperatorExpectsVariable(lex.span())),
+                            Err((expr, _)) => {
+                                lhs = expr;
+                                if op.binding_power().0 < min_bp {
+                                    break;
+                                }
+                                return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+                            }
+                        };
+                        lex.next();
+                        let expr = self.parse_expression(lex, op.binding_power().1)?;
+                        let comma_expr = self.parse_comma_expr(lex, expr)?;
+                        lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
+                        Expr::node(op.expr(place, comma_expr), self.parser.arena)
+                    }
+                    ArrayOperator::In => {
+                        lex.next();
+                        let Place::Variable(var) = self.parse_place(lex)? else {
+                            return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+                        };
+                        Expr::node(
+                            op.expr(var, vec![in self.parser.arena; lhs.take()]),
+                            self.parser.arena,
+                        )
+                    }
+                }
             } else if let Ok(op) = BinaryOperator::parse(next, &span)
                 && !matches!(next, Token::Increment | Token::Decrement)
             {
@@ -269,7 +302,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         // with lesser binding power); i.e., we parse `x = @/a/ ? a : b` into
         // `(?: (= x @/a/) a b)`. This is generally true for all positions of
         // typed regexes, but only an edge case here.
-        let mut rhs = if self.typed_regex
+        let rhs = if self.typed_regex
             && let Some(Token::TypedRegex(slice)) =
                 lex.next_if(|t| matches!(t, Token::TypedRegex(_)))?
         {
@@ -282,15 +315,6 @@ impl<'a, 'b> Pratt<'a, 'b> {
         } else {
             self.parse_expression(lex, op.binding_power().1)?
         };
-        if op == BinaryPlaceOperator::ArrayAccess {
-            // We can only index on variables.
-            if !matches!(place, Place::Variable(_)) {
-                return Err(ParsingError::OperatorExpectsVariable(lex.span()));
-            }
-            // Concatenates each dimension with `SUBSEP`.
-            // FIXME: undo when pretty-printing or defer to the interpreter.
-            rhs = self.parse_array_index(lex, rhs)?;
-        }
         Ok(Expr::node(op.expr(place, rhs), self.parser.arena))
     }
 
@@ -317,12 +341,11 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     let Expr::Leaf(Atom::Variable(var)) = expr else {
                         return Err(ParsingError::OperatorExpectsVariable(start..lex.span().end));
                     };
-                    let mut index = self.parse_expression(
-                        lex,
-                        BinaryPlaceOperator::ArrayAccess.binding_power().1,
-                    )?;
-                    index = self.parse_array_index(lex, index)?;
-                    return Ok(Place::ArrayElement(var, index));
+                    let expr =
+                        self.parse_expression(lex, ArrayOperator::Index.binding_power().1)?;
+                    let index = self.parse_comma_expr(lex, expr)?;
+                    lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
+                    return Ok(Place::Index(var, index));
                 }
                 expr
             }
@@ -335,21 +358,15 @@ impl<'a, 'b> Pratt<'a, 'b> {
     }
 
     /// Continuously consumes comma-separated expressions.
-    pub fn parse_array_index(&mut self, lex: &mut Lexer<'a>, lhs: Expr<'a>) -> Result<Expr<'a>> {
-        let mut rhs = lhs;
+    pub fn parse_comma_expr(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        lhs: Expr<'a>,
+    ) -> Result<Vec<'a, Expr<'a>>> {
+        let mut rhs = vec![in self.parser.arena; lhs];
         while lex.consume(&Token::Comma) {
-            rhs = Expr::node(
-                BinaryOperator::Concat.expr(
-                    rhs,
-                    Expr::node(
-                        BinaryOperator::Concat.expr(Expr::leaf(Variable::Subsep), self.parse(lex)?),
-                        self.parser.arena,
-                    ),
-                ),
-                self.parser.arena,
-            );
+            rhs.push(self.parse(lex)?);
         }
-        lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
         Ok(rhs)
     }
 

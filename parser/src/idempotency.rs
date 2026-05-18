@@ -8,9 +8,9 @@ use std::fmt::{Debug, Display, Formatter, Result, Write};
 use crate::{
     Ast, Function,
     ast::{
-        Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Command, Expr, ExprNode,
-        Getline, Place, Redirection, Rule, RulePattern, SimpleStatement, Statement, Ternary,
-        UnaryOperator, UnaryPlaceOperator, Variable,
+        ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Command,
+        Expr, ExprNode, Getline, Place, Redirection, Rule, RulePattern, SimpleStatement, Statement,
+        Ternary, UnaryOperator, UnaryPlaceOperator, Variable,
     },
 };
 
@@ -205,7 +205,11 @@ impl Display for SimpleStatement<'_> {
                 write!(f, "{name} ")?;
                 write_args(f, args, indent)
             }
-            SimpleStatement::Delete(array, Some(index)) => write!(f, "delete {array}[{index}]"),
+            SimpleStatement::Delete(array, Some(args)) => {
+                write!(f, "delete {array}[")?;
+                write_args(f, args, indent)?;
+                write!(f, "]")
+            }
             SimpleStatement::Delete(array, None) => write!(f, "delete {array}"),
         }
     }
@@ -262,7 +266,11 @@ impl Display for Place<'_> {
             Self::Variable(var) => <_ as Display>::fmt(var, f),
             Self::Record(Expr::Leaf(leaf)) => write!(f, "${leaf}"),
             Self::Record(Expr::Node(node)) => write!(f, "$({node})"),
-            Self::ArrayElement(var, expr) => write!(f, "{var}[{expr}]"),
+            Self::Index(var, args) => {
+                write!(f, "{var}[")?;
+                write_args(f, args, 0)?;
+                write!(f, "]")
+            }
         }
     }
 }
@@ -309,21 +317,38 @@ impl Display for ExprNode<'_> {
             },
             Self::BinaryPlaceOperation(op, place, idx) => {
                 let (left_bp, right_bp) = op.binding_power();
-                if op == &BinaryPlaceOperator::ArrayAccess {
-                    let idx_w = encode(indent, 0);
-                    if left_bp < parent_bp {
-                        write!(f, "({place}[{idx:idx_w$}])")
-                    } else {
-                        write!(f, "{place}[{idx:idx_w$}]")
-                    }
+                let right_w = encode(indent, right_bp);
+                if left_bp < parent_bp {
+                    write!(f, "({place}{op}{idx:right_w$})")
                 } else {
-                    let right_w = encode(indent, right_bp);
-                    if left_bp < parent_bp {
-                        write!(f, "({place}{op}{idx:right_w$})")
-                    } else {
-                        write!(f, "{place}{op}{idx:right_w$}")
+                    write!(f, "{place}{op}{idx:right_w$}")
+                }
+            }
+            Self::ArrayOperation(op, arr, args) => {
+                let (left_bp, right_bp) = op.binding_power();
+                let right_w = encode(indent, right_bp);
+                if left_bp < parent_bp {
+                    write!(f, "(")?;
+                }
+                match op {
+                    ArrayOperator::Index => {
+                        write!(f, "{arr}[")?;
+                        write_args(f, args, indent)?;
+                        write!(f, "]")?;
+                    }
+                    ArrayOperator::In if args.len() > 1 => {
+                        write!(f, "(")?;
+                        write_args(f, args, indent)?;
+                        write!(f, ") in {arr}")?;
+                    }
+                    ArrayOperator::In => {
+                        write!(f, "{:right_w$} in {arr}", args[0])?;
                     }
                 }
+                if left_bp < parent_bp {
+                    write!(f, ")")?;
+                }
+                Ok(())
             }
             Self::Ternary(cond, then_expr, else_expr) => {
                 let ternary_bp = Ternary.binding_power().0;
@@ -399,8 +424,6 @@ impl Display for BinaryPlaceOperator {
             Self::DivAssign => write!(f, " /= "),
             Self::PowAssign => write!(f, " ^= "),
             Self::ModAssign => write!(f, " %= "),
-            Self::InArray => write!(f, " in "),
-            Self::ArrayAccess => unreachable!("Array access needs special handling."),
         }
     }
 }

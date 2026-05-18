@@ -25,7 +25,7 @@ pub use crate::ast::Ast;
 pub use crate::lex::Lexer;
 use crate::{
     ast::{
-        Atom, BinaryPlaceOperator, Body, Command, Expr, ExprNode, Function, Identifier, Pattern,
+        ArrayOperator, Atom, Body, Command, Expr, ExprNode, Function, Identifier, Pattern,
         Redirection, Rule, RulePattern, SimpleStatement, SpecialPattern, Statement, Variable,
     },
     diagnostics::{ParsingError, report_error},
@@ -444,14 +444,14 @@ impl<'a> Parser<'a> {
         let Some(SimpleStatement::Expression(Expr::Node(node))) = expr else {
             return Err(ParsingError::InvalidForLoop(lex.span()));
         };
-        let ExprNode::BinaryPlaceOperation(
-            BinaryPlaceOperator::InArray,
-            ast::Place::Variable(variable),
-            Expr::Leaf(Atom::Variable(array)),
-        ) = Box::into_inner(node)
+        let ExprNode::ArrayOperation(ArrayOperator::In, array, mut args) = Box::into_inner(node)
         else {
             return Err(ParsingError::InvalidForLoop(lex.span()));
         };
+        let [Expr::Leaf(Atom::Variable(variable))] = &mut *args else {
+            return Err(ParsingError::InvalidForLoop(lex.span()));
+        };
+        let variable = replace(variable, Variable::Nr);
 
         lex.expect(
             &Token::ClosedParent,
@@ -561,7 +561,7 @@ impl<'a> Parser<'a> {
         let index = if lex.consume(&Token::OpenBracket) {
             let mut pratt = Pratt::new(self, false);
             let first = pratt.parse(lex)?;
-            Some(pratt.parse_array_index(lex, first)?)
+            Some(pratt.parse_comma_expr(lex, first)?)
         } else {
             None
         };

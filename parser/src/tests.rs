@@ -228,9 +228,9 @@ fn test_parser_inc_dec() {
             (None, Some("(body (Concat (IncrementL awk::a) (DecrementR (Record 0))))")),
             (
                 None,
-                Some("(body (Concat (DecrementL (ArrayAccess awk::a 2)) (IncrementL (Record (Add 1 1)))))")
+                Some("(body (Concat (DecrementL (Index awk::a 2)) (IncrementL (Record (Add 1 1)))))")
             ),
-            (None, Some("(body (Concat (IncrementR awk::a) (DecrementR (ArrayAccess awk::a \"x\"))))")),
+            (None, Some("(body (Concat (IncrementR awk::a) (DecrementR (Index awk::a \"x\"))))")),
             (None, Some("(body (Concat (DecrementL awk::a) (IncrementR (Record \"a\"))))")),
         ],
     });

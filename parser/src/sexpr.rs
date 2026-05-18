@@ -210,6 +210,13 @@ impl Debug for Expr<'_> {
                 ExprNode::UnaryOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::BinaryPlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
+                ExprNode::ArrayOperation(op, arr, args) => {
+                    write!(f, "({op:?} {arr:?}")?;
+                    for arg in args {
+                        write!(f, " {arg:?}")?;
+                    }
+                    write!(f, ")")
+                }
                 ExprNode::UnaryPlaceOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
                 ExprNode::Getline(getline) => match getline {
@@ -307,7 +314,13 @@ impl Debug for Place<'_> {
         match self {
             Self::Record(expr) => write!(f, "(Record {expr:?})"),
             Self::Variable(var) => <_ as Debug>::fmt(var, f),
-            Self::ArrayElement(var, index) => write!(f, "(ArrayAccess {var:?} {index:?})"),
+            Self::Index(var, index) => {
+                write!(f, "(Index {var:?}")?;
+                for i in index {
+                    write!(f, " {i:?}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
