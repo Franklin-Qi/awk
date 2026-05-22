@@ -7,6 +7,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::mem::forget;
 
+use bumpalo::{Bump, collections::Vec};
 use indexmap::IndexSet;
 use parser::{Atom, BinaryOperator, Expr, ExprNode, UnaryOperator};
 
@@ -16,10 +17,11 @@ use crate::ir::{Hint, HintedReg, Instruction, Label, NonLocal, OpCode, Reg};
 pub struct Value(f64); // TODO: use NaN-boxing.
 
 #[derive(Debug)]
-struct Code {
-    bc: Bytecode,
-    consts: IndexSet<Value>,
-    free_regs: Vec<Reg>,
+struct Code<'a> {
+    arena: &'a Bump,
+    bc: Bytecode<'a>,
+    consts: &'a mut IndexSet<Value>,
+    free_regs: Vec<'a, Reg>,
     reg_pointer: u16,
 }
 
@@ -27,7 +29,7 @@ struct Code {
 #[derive(Debug)]
 struct LinearReg(Reg, Hint);
 
-impl Code {
+impl Code<'_> {
     fn lower_expr(&mut self, expr: &Expr) -> LinearReg {
         let dest = self.alloc_reg();
         let hint = self.lower_expr_into(expr, dest);
@@ -103,9 +105,9 @@ impl Code {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-struct Bytecode {
-    code: Vec<Instruction>,
+#[derive(Debug, Clone)]
+struct Bytecode<'a> {
+    code: Vec<'a, Instruction>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,9 +116,11 @@ struct RegsState {
     n_free_regs: usize,
 }
 
-impl Bytecode {
-    fn new() -> Self {
-        Self::default()
+impl<'a> Bytecode<'a> {
+    fn new_in(bump: &'a Bump) -> Self {
+        Self {
+            code: Vec::with_capacity_in(64, bump),
+        }
     }
 
     #[inline(always)]
@@ -159,15 +163,17 @@ impl RegsState {
 }
 
 pub fn test_interpreter(expr: &Expr<'_>) -> impl Display {
+    let bump = Bump::with_capacity(16384);
     let mut c = Code {
-        bc: Bytecode::new(),
-        consts: IndexSet::new(),
+        arena: &bump,
+        bc: Bytecode::new_in(&bump),
+        consts: &mut IndexSet::new(),
         reg_pointer: 0,
-        free_regs: Vec::new(),
+        free_regs: Vec::new_in(&bump),
     };
     let result = c.lower_expr(expr);
     forget(result);
-    c
+    c.to_string()
 }
 
 impl From<UnaryOperator> for OpCode {
@@ -218,7 +224,7 @@ impl Eq for Value {}
 //     fn fold(&self, args: Self::Args) -> T;
 // }
 
-impl Display for Bytecode {
+impl Display for Bytecode<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let n = self.code.len() / 10 + 1;
         for (i, e) in self.code.iter().enumerate() {
@@ -231,7 +237,7 @@ impl Display for Bytecode {
     }
 }
 
-impl Display for Code {
+impl Display for Code<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Bytecode:\n{}\n", self.bc)?;
         writeln!(f, "Consts:")?;
