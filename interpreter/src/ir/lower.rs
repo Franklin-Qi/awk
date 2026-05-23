@@ -9,7 +9,10 @@ use std::mem::forget;
 
 use bumpalo::{Bump, collections::Vec};
 use indexmap::IndexSet;
-use parser::{Atom, BinaryOperator, Expr, ExprNode, UnaryOperator, Variable};
+use parser::{
+    Atom, BinaryOperator, BinaryPlaceOperator, Body, Expr, ExprNode, Place, SimpleStatement,
+    Statement, UnaryOperator, Variable,
+};
 
 use crate::{
     ir::{Hint, HintedReg, Instruction, Label, NonLocal, OpCode, Reg},
@@ -31,11 +34,51 @@ pub struct Code<'arena> {
 struct LinearReg(Reg, Hint);
 
 impl Code<'_> {
-    fn lower_expr(&mut self, expr: &Expr) -> LinearReg {
-        let dest = self.alloc_reg();
-        let hint = self.lower_expr_into(expr, dest);
-        LinearReg(dest, hint)
+    fn lower_body(&mut self, body: &Body) {
+        for stmnt in &body.0 {
+            self.lower_statement(stmnt);
+        }
     }
+
+    fn lower_statement(&mut self, stmnt: &Statement) {
+        match stmnt {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let mut state = RegsState::new(self);
+                let condition = self.lower_expr(condition);
+                let label_then = self.following_instr(1);
+                let if_label =
+                    self.bc
+                        .emit(Instruction::branch(condition.reg(), label_then, Label(0)));
+                self.free_reg(condition);
+                self.lower_body(then_body);
+                self.bc.nth(if_label).args.branch.2 = self.following_instr(1);
+
+                if let Some(else_body) = else_body {
+                    state.reg_pointer += 1;
+                    let end_label = self.bc.emit(Instruction::jump(Label(0)));
+                    state.scope_hwm(self, |c| c.lower_body(else_body));
+                    self.bc.nth(end_label).args.jump = self.following_instr(0);
+                }
+            }
+            Statement::Simple(SimpleStatement::Expression(expr)) => {
+                let reg = self.lower_expr(expr);
+                self.free_reg(reg);
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn lower_expr(&mut self, expr: &Expr) -> LinearReg {
+        let mut dest = self.alloc_reg();
+        let hint = self.lower_expr_into(expr, dest.reg());
+        dest.1 = hint;
+        dest
+    }
+
     fn lower_expr_into(&mut self, expr: &Expr, dest: Reg) -> Hint {
         match expr {
             Expr::Leaf(atom) => match atom {
@@ -69,19 +112,28 @@ impl Code<'_> {
                     self.lower_expr_into(cond, dest);
 
                     let mut state = RegsState::new(self);
-                    let br_if = self
-                        .bc
-                        .emit(Instruction::br_if(OpCode::BrIf, dest, Label(0)));
+                    let branch =
+                        self.bc
+                            .emit(Instruction::branch(dest, self.following_instr(1), Label(0)));
 
-                    state = state.scope(self, |c| c.lower_expr_into(false_then, dest));
+                    state = state.scope(self, |c| c.lower_expr_into(true_then, dest));
 
-                    let jump = self.bc.emit(Instruction::jump(OpCode::Jump, Label(0)));
-                    let label = Label(self.bc.len());
+                    let jump = self.bc.emit(Instruction::jump(Label(0)));
+                    let label = self.following_instr(0);
 
-                    state.scope_hwm(self, |c| c.lower_expr_into(true_then, dest));
+                    state.scope_hwm(self, |c| c.lower_expr_into(false_then, dest));
 
-                    self.bc.nth(br_if).args.br_if.1 = label;
-                    self.bc.nth(jump).args.jump = Label(self.bc.len());
+                    self.bc.nth(branch).args.branch.2 = label;
+                    self.bc.nth(jump).args.jump = self.following_instr(0);
+                }
+                ExprNode::BinaryPlaceOperation(BinaryPlaceOperator::Assignment, place, expr) => {
+                    self.lower_expr_into(expr, dest);
+                    let Place::Variable(Variable::User(var)) = place else {
+                        todo!()
+                    };
+                    let var = self.symbols.register_user_var(var, self.arena);
+                    self.bc
+                        .emit(Instruction::load_store(OpCode::StoreUser, dest, var));
                 }
                 _ => todo!(),
             },
@@ -89,12 +141,15 @@ impl Code<'_> {
         Hint::None
     }
 
-    fn alloc_reg(&mut self) -> Reg {
-        self.free_regs.pop().unwrap_or_else(|| {
-            let current = self.reg_pointer;
-            self.reg_pointer += 1;
-            Reg(current)
-        })
+    fn alloc_reg(&mut self) -> LinearReg {
+        self.free_regs
+            .pop()
+            .map(|r| LinearReg(r, Hint::None))
+            .unwrap_or_else(|| {
+                let current = self.reg_pointer;
+                self.reg_pointer += 1;
+                LinearReg(Reg(current), Hint::None)
+            })
     }
 
     fn free_reg(&mut self, reg: LinearReg) {
@@ -103,6 +158,10 @@ impl Code<'_> {
 
     fn register_const(&mut self, value: Value) -> NonLocal {
         NonLocal(self.consts.insert_full(value).0 as u16)
+    }
+
+    fn following_instr(&self, nth: u16) -> Label {
+        Label(self.bc.len() + nth)
     }
 }
 
@@ -163,7 +222,7 @@ impl RegsState {
     }
 }
 
-pub fn test_interpreter(expr: &Expr<'_>) -> impl Display {
+pub fn test_interpreter(stmnt: &Body<'_>) -> impl Display {
     let bump = Bump::with_capacity(16384);
     let mut c = Code {
         arena: &bump,
@@ -173,8 +232,7 @@ pub fn test_interpreter(expr: &Expr<'_>) -> impl Display {
         reg_pointer: 0,
         free_regs: Vec::new_in(&bump),
     };
-    let result = c.lower_expr(expr);
-    forget(result);
+    c.lower_body(stmnt);
     let code = c.to_string();
     let mut vm = Interpreter::new(ExecMode::Uu, c);
     vm.run();

@@ -87,7 +87,7 @@ impl Interpreter<'_> {
     pub fn run(&mut self) {
         while let Some(instr) = self.bc.code.get(self.program_counter) {
             match instr {
-                ix if let Some(&(dest, src)) = ix.get_unary() => {}
+                // ix if let Some(&(dest, src)) = ix.get_unary() => {}
                 ix if let Some(&(dest, lhs, rhs)) = ix.get_binary() => {
                     let lhs = self.registers.read(lhs);
                     let rhs = self.registers.read(rhs);
@@ -113,7 +113,20 @@ impl Interpreter<'_> {
                     }
                     _ => todo!(),
                 },
-                _ => todo!(),
+                ix if let Some((cond, true_to, false_to)) = ix.get_branch() => {
+                    let label = if self.registers.read(*cond).0 == 0. {
+                        false_to.0
+                    } else {
+                        true_to.0
+                    };
+                    self.program_counter = label as _;
+                    continue;
+                }
+                ix if let Some(label) = ix.get_jump() => {
+                    self.program_counter = label.0 as _;
+                    continue;
+                }
+                ix => todo!("{ix:?}"),
             }
             self.program_counter += 1;
         }

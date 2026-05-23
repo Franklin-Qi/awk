@@ -26,7 +26,7 @@ pub struct Reg(pub u16);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-pub struct Label(u16);
+pub struct Label(pub u16);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -73,7 +73,6 @@ pub enum OpCode {
     Jump,
     Return,
     Branch,
-    BrIf,
 }
 
 const _: () = const { assert!(size_of::<Instruction>() <= 8) };
@@ -95,7 +94,6 @@ pub union Arguments {
     jump: JumpArg,
     ret: RetArg,
     branch: BranchArg,
-    br_if: BrIfArg,
     call: CallArgs,
     ind_call: IndCallArgs,
 }
@@ -106,7 +104,6 @@ pub type LoadStoreArg = (Reg, NonLocal);
 pub type JumpArg = Label;
 pub type RetArg = Reg;
 pub type BranchArg = (Reg, Label, Label);
-pub type BrIfArg = (Reg, Label);
 pub type CallArgs = (Reg, NonLocal, ArgCount);
 pub type IndCallArgs = (Reg, Reg, ArgCount);
 
@@ -159,21 +156,17 @@ impl Instruction {
         }
     }
 
-    fn jump(opcode: impl Into<OpCode>, to: Label) -> Self {
-        let opcode = opcode.into();
-        debug_assert!(opcode.is_jump());
+    fn jump(to: Label) -> Self {
         Self {
-            opcode,
+            opcode: OpCode::Jump,
             args: Arguments { jump: to },
             hint: Hint::None,
         }
     }
 
-    fn branch(opcode: impl Into<OpCode>, cond: Reg, true_to: Label, false_to: Label) -> Self {
-        let opcode = opcode.into();
-        debug_assert!(opcode.is_branch());
+    fn branch(cond: Reg, true_to: Label, false_to: Label) -> Self {
         Self {
-            opcode,
+            opcode: OpCode::Branch,
             args: Arguments {
                 branch: (cond, true_to, false_to),
             },
@@ -181,32 +174,32 @@ impl Instruction {
         }
     }
 
-    fn br_if(opcode: impl Into<OpCode>, cond: Reg, to: Label) -> Self {
-        let opcode = opcode.into();
-        debug_assert!(opcode.is_branch_if());
-        Self {
-            opcode,
-            args: Arguments { br_if: (cond, to) },
-            hint: Hint::None,
-        }
-    }
-
     pub fn get_unary(&self) -> Option<&UnaryArg> {
         self.opcode
             .is_unary()
-            .then(|| unsafe { &self.args.unary_local })
+            .then_some(unsafe { &self.args.unary_local })
     }
 
     pub fn get_binary(&self) -> Option<&BinaryArg> {
         self.opcode
             .is_binary()
-            .then(|| unsafe { &self.args.binary_local })
+            .then_some(unsafe { &self.args.binary_local })
     }
 
     pub fn get_load_store(&self) -> Option<&LoadStoreArg> {
         self.opcode
             .is_load_store()
-            .then(|| unsafe { &self.args.load_store })
+            .then_some(unsafe { &self.args.load_store })
+    }
+
+    pub fn get_branch(&self) -> Option<&BranchArg> {
+        self.opcode
+            .is_branch()
+            .then_some(unsafe { &self.args.branch })
+    }
+
+    pub fn get_jump(&self) -> Option<&JumpArg> {
+        self.opcode.is_jump().then_some(unsafe { &self.args.jump })
     }
 }
 
@@ -258,10 +251,6 @@ impl OpCode {
     fn is_branch(self) -> bool {
         matches!(self, Self::Branch)
     }
-
-    fn is_branch_if(self) -> bool {
-        matches!(self, Self::BrIf)
-    }
 }
 
 #[repr(u8, align(1))]
@@ -294,9 +283,9 @@ impl Debug for Instruction {
                 let (dest, src) = unsafe { &self.args.load_store };
                 write!(f, "({dest:?}, {src:?})")
             }
-            OpCode::BrIf => {
-                let (cond, label) = unsafe { self.args.br_if };
-                write!(f, "({cond:?}, {label:?})")
+            OpCode::Branch => {
+                let (cond, label_then, label_else) = unsafe { self.args.branch };
+                write!(f, "({cond:?}, {label_then:?}, {label_else:?})")
             }
             OpCode::Jump => {
                 let label = unsafe { self.args.jump };
@@ -350,9 +339,9 @@ impl Display for Instruction {
                 let (dest, src) = unsafe { &self.args.load_store };
                 write!(f, "{dest} <- {op} intrinsic[{src}]")
             }
-            op @ OpCode::BrIf => {
-                let (cond, label) = unsafe { self.args.br_if };
-                write!(f, "{op} {cond}, {label}")
+            op @ OpCode::Branch => {
+                let (cond, label_then, label_else) = unsafe { self.args.branch };
+                write!(f, "{op} {cond}, {label_then}, {label_else}")
             }
             op @ OpCode::Jump => {
                 let label = unsafe { self.args.jump };
@@ -405,8 +394,7 @@ impl Display for OpCode {
             Self::IndirectCall => "vcall",
             Self::Jump => "jmp",
             Self::Return => "ret",
-            Self::Branch => "br",
-            Self::BrIf => "brif",
+            Self::Branch => "brif",
         };
         <_ as Display>::fmt(str, f)
     }

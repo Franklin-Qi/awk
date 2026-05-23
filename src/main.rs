@@ -15,7 +15,7 @@ use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
 use interpreter::test_interpreter;
-use parser::{Body, Parser, Rule};
+use parser::{Parser, Rule};
 
 use crate::{
     cli::Args,
@@ -55,13 +55,11 @@ fn uu_main() -> Result<()> {
     dbg!(arena.chunk_capacity());
 
     if let Some(Rule {
-        actions: Some(Body(a)),
+        actions: Some(body),
         pattern: _,
     }) = ast.rules.first()
-        && let Some(parser::Statement::Simple(parser::SimpleStatement::Expression(expr))) =
-            a.first()
     {
-        let x = test_interpreter(expr);
+        let x = test_interpreter(body);
         if let Err(e) = writeln!(io::stdout(), "---\n{x}")
             && e.kind() != io::ErrorKind::BrokenPipe
         {
