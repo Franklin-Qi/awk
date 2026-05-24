@@ -3,10 +3,9 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{fmt::Display, hash::Hash, mem::forget};
+use std::{hash::Hash, mem::forget};
 
 use bumpalo::{Bump, collections::Vec};
-use indexmap::IndexSet;
 use parser::{
     Atom, BinaryOperator, BinaryPlaceOperator, Body, Expr, ExprNode, Place, SimpleStatement,
     Statement, UnaryOperator, Variable,
@@ -14,14 +13,14 @@ use parser::{
 
 use crate::{
     ir::{Hint, HintedReg, Instruction, Label, NonLocal, OpCode, Reg},
-    vm::{ExecMode, Interpreter, SymbolTable, Value},
+    vm::{Consts, ExecMode, Interpreter, SymbolTable, Value},
 };
 
 #[derive(Debug)]
 pub struct Code<'arena> {
     pub arena: &'arena Bump,
     pub bc: Bytecode<'arena>,
-    pub consts: IndexSet<Value>,
+    pub consts: Consts,
     pub symbols: SymbolTable<'arena>,
     free_regs: Vec<'arena, Reg>,
     pub reg_pointer: u16,
@@ -176,7 +175,7 @@ impl Code<'_> {
     }
 
     fn register_const(&mut self, value: Value) -> NonLocal {
-        NonLocal(self.consts.insert_full(value).0 as u16)
+        NonLocal(self.consts.0.insert_full(value).0 as u16)
     }
 
     fn following_instr(&self, nth: u16) -> Label {
@@ -236,21 +235,20 @@ impl RegsState {
     }
 }
 
-pub fn test_interpreter(stmnt: &Body<'_>) -> impl Display {
+pub fn test_interpreter(stmnt: &Body<'_>) -> String {
     let bump = Bump::with_capacity(16384);
     let mut c = Code {
         arena: &bump,
         bc: Bytecode::new_in(&bump),
-        consts: IndexSet::new(),
+        consts: Consts::new(),
         symbols: SymbolTable::new_in(&bump),
         reg_pointer: 0,
         free_regs: Vec::new_in(&bump),
     };
     c.lower_body(stmnt);
-    let code = c.to_string();
     let mut vm = Interpreter::new(ExecMode::Uu, c);
     vm.run();
-    format!("{code}---\n{vm:#?}")
+    vm.to_string()
 }
 
 impl From<UnaryOperator> for OpCode {
@@ -300,33 +298,6 @@ impl Eq for Value {}
 //     type Args;
 //     fn fold(&self, args: Self::Args) -> T;
 // }
-
-impl Display for Bytecode<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let n = self.code.len() / 10 + 1;
-        for (i, e) in self.code.iter().enumerate() {
-            write!(f, "{i:n$}: {e}")?;
-            if i + 1 < self.code.len() as _ {
-                writeln!(f)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Display for Code<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Bytecode:\n{}\n", self.bc)?;
-        writeln!(f, "Consts:")?;
-        for (i, e) in self.consts.iter().enumerate() {
-            write!(f, "mem[{i}] = {}", e.0)?;
-            if i + 1 < self.consts.len() as _ {
-                writeln!(f)?;
-            }
-        }
-        Ok(())
-    }
-}
 
 impl LinearReg {
     fn into_inner(self) -> Reg {

@@ -1,3 +1,5 @@
+use std::fmt::{self, Display};
+
 use bumpalo::{Bump, collections::Vec};
 use hashbrown::{DefaultHashBuilder, HashMap};
 use indexmap::{IndexMap, IndexSet};
@@ -26,7 +28,7 @@ pub struct Interpreter<'a> {
     program_counter: usize,
     registers: Registers<'a>,
     symbols: SymbolTable<'a>,
-    consts: IndexSet<Value>,
+    consts: Consts,
     compat: ExecMode,
 }
 
@@ -40,6 +42,9 @@ pub struct SymbolTable<'a> {
     records: HashMap<usize, Value, DefaultHashBuilder, &'a Bump>,
     // etc
 }
+
+#[derive(Debug)]
+pub struct Consts(pub IndexSet<Value>);
 
 impl<'a> Interpreter<'a> {
     pub fn new(compat: ExecMode, code: Code<'a>) -> Self {
@@ -83,6 +88,12 @@ impl<'a> SymbolTable<'a> {
     }
 }
 
+impl Consts {
+    pub fn new() -> Self {
+        Self(IndexSet::with_capacity(4))
+    }
+}
+
 impl Interpreter<'_> {
     pub fn run(&mut self) {
         while let Some(instr) = self.bc.code.get(self.program_counter) {
@@ -103,7 +114,7 @@ impl Interpreter<'_> {
                 ix if let Some(&(dest, src)) = ix.get_load_store() => match ix.opcode {
                     OpCode::LoadConst => self
                         .registers
-                        .write(dest, self.consts.get_index(src.0 as _).unwrap()),
+                        .write(dest, self.consts.0.get_index(src.0 as _).unwrap()),
                     OpCode::LoadUser => {
                         self.registers
                             .write(dest, self.symbols.lookup_user_var(src));
@@ -140,4 +151,65 @@ impl Registers<'_> {
     fn write(&mut self, dest: Reg, src: &Value) {
         self.0[dest.0 as usize] = Value::clone(src);
     }
+}
+
+impl Display for Interpreter<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}\n", self.bc)?;
+        writeln!(f, "{}\n", self.registers)?;
+        writeln!(f, "{}\n", self.symbols)?;
+        write!(f, "{}", self.consts)
+    }
+}
+
+impl Display for Code<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}\n", self.bc)?;
+        writeln!(f, "{}\n", self.symbols)?;
+        write!(f, "{}", self.consts)
+    }
+}
+
+impl Display for Bytecode<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Bytecode:")?;
+        let n = self.code.len().checked_ilog10().unwrap_or(0) as usize + 1;
+        fmt_list(f, self.code.iter(), |f, i, e| write!(f, "{i:0n$}: {e}"))
+    }
+}
+
+impl Display for Registers<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Registers:")?;
+        let n = self.0.len().checked_ilog10().unwrap_or(0) as usize + 1;
+        fmt_list(f, self.0.iter(), |f, i, e| write!(f, "r{i:0n$} = {e:?}"))
+    }
+}
+
+impl Display for SymbolTable<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Symbols:")?;
+        fmt_list(f, self.user.iter(), |f, i, (k, v)| {
+            write!(f, "user[{i}] @ {k} = {v:?}")
+        })
+    }
+}
+
+impl Display for Consts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Consts:")?;
+        fmt_list(f, self.0.iter(), |f, i, e| write!(f, "mem[{i}] = {e:?}"))
+    }
+}
+
+fn fmt_list<'a, T: Copy>(
+    f: &mut fmt::Formatter<'a>,
+    iter: impl Iterator<Item = T>,
+    cb: impl Fn(&mut fmt::Formatter<'a>, usize, T) -> fmt::Result,
+) -> fmt::Result {
+    for (i, e) in iter.enumerate() {
+        write!(f, "\n  ")?;
+        cb(f, i, e)?;
+    }
+    Ok(())
 }
