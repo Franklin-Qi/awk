@@ -16,6 +16,7 @@ mod tests;
 
 use std::{fmt::Debug, mem::replace};
 
+use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
 use either::Either::{Left, Right};
 use hashbrown::HashMap;
@@ -685,7 +686,7 @@ impl<'a> Ast<'a> {
             end_file: Vec::new_in(arena),
             rules: Vec::new_in(arena),
             concurrent: Vec::new_in(arena),
-            functions: HashMap::new_in(arena),
+            functions: HashMap::with_hasher_in(RandomState::new(), arena),
         }
     }
 }

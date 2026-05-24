@@ -5,9 +5,10 @@
 
 use std::fmt::Debug;
 
+use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec};
 use either::Either;
-use hashbrown::{DefaultHashBuilder, HashMap};
+use hashbrown::HashMap;
 use lexer::{Slice, Span, Token};
 
 use crate::{ParsingError, Result, lex::TokenExt};
@@ -21,7 +22,7 @@ pub struct Ast<'a> {
     pub end_file: Vec<'a, Body<'a>>,
     pub rules: Vec<'a, Rule<'a>>,
     pub concurrent: Vec<'a, Rule<'a>>,
-    pub functions: HashMap<Identifier<'a>, Function<'a>, DefaultHashBuilder, &'a Bump>,
+    pub functions: HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>,
 }
 
 #[derive(Debug)]

@@ -30,9 +30,9 @@ smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_n
 bumpalo = { version = "3.20.2", features = ["boxed", "collections", "std", "allocator-api2"] }
 hashbrown = "0.17.0"
 allocator-api2 = "0.4.0"
+ahash = "0.8.12"
 
 [dependencies]
-# lexer.workspace = true # FIXME(parser complete): bypass through parser
 interpreter.workspace = true
 parser.workspace = true
 color-eyre.workspace = true

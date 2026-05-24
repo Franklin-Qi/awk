@@ -1,8 +1,9 @@
 use std::fmt::{self, Display};
 
+use ahash::RandomState;
 use bumpalo::{Bump, collections::Vec};
-use hashbrown::{DefaultHashBuilder, HashMap};
-use indexmap::{IndexMap, IndexSet};
+use hashbrown::HashMap;
+use indexmap_allocator_api::{IndexMap, IndexSet};
 use parser::Identifier;
 
 use crate::ir::{
@@ -28,7 +29,7 @@ pub struct Interpreter<'a> {
     program_counter: usize,
     registers: Registers<'a>,
     symbols: SymbolTable<'a>,
-    consts: Consts,
+    consts: Consts<'a>,
     compat: ExecMode,
 }
 
@@ -37,14 +38,14 @@ pub struct Registers<'a>(Vec<'a, Value>);
 
 #[derive(Debug)]
 pub struct SymbolTable<'a> {
-    user: IndexMap<Identifier<'a>, Value>,
+    user: IndexMap<Identifier<'a>, Value, RandomState, &'a Bump>,
     // separate table for cheap invalidation. It's an arena _visibly shrugs_.
-    records: HashMap<usize, Value, DefaultHashBuilder, &'a Bump>,
+    records: HashMap<usize, Value, RandomState, &'a Bump>,
     // etc
 }
 
 #[derive(Debug)]
-pub struct Consts(pub IndexSet<Value>);
+pub struct Consts<'a>(pub IndexSet<Value, RandomState, &'a Bump>);
 
 impl<'a> Interpreter<'a> {
     pub fn new(compat: ExecMode, code: Code<'a>) -> Self {
@@ -63,8 +64,8 @@ impl<'a> Interpreter<'a> {
 impl<'a> SymbolTable<'a> {
     pub fn new_in(arena: &'a Bump) -> Self {
         Self {
-            user: IndexMap::new(),
-            records: HashMap::new_in(arena),
+            user: IndexMap::new_in(arena),
+            records: HashMap::with_hasher_in(RandomState::new(), arena),
         }
     }
     fn lookup_user_var(&self, var: NonLocal) -> &Value {
@@ -88,9 +89,9 @@ impl<'a> SymbolTable<'a> {
     }
 }
 
-impl Consts {
-    pub fn new() -> Self {
-        Self(IndexSet::with_capacity(4))
+impl<'a> Consts<'a> {
+    pub fn new_in(arena: &'a Bump) -> Self {
+        Self(IndexSet::with_capacity_in(4, arena))
     }
 }
 
@@ -195,7 +196,7 @@ impl Display for SymbolTable<'_> {
     }
 }
 
-impl Display for Consts {
+impl Display for Consts<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Consts:")?;
         fmt_list(f, self.0.iter(), |f, i, e| write!(f, "mem[{i}] = {e:?}"))

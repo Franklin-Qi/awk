@@ -20,7 +20,7 @@ use crate::{
 pub struct Code<'arena> {
     pub arena: &'arena Bump,
     pub bc: Bytecode<'arena>,
-    pub consts: Consts,
+    pub consts: Consts<'arena>,
     pub symbols: SymbolTable<'arena>,
     free_regs: Vec<'arena, Reg>,
     pub reg_pointer: u16,
@@ -240,7 +240,7 @@ pub fn test_interpreter(stmnt: &Body<'_>) -> String {
     let mut c = Code {
         arena: &bump,
         bc: Bytecode::new_in(&bump),
-        consts: Consts::new(),
+        consts: Consts::new_in(&bump),
         symbols: SymbolTable::new_in(&bump),
         reg_pointer: 0,
         free_regs: Vec::new_in(&bump),
