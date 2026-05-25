@@ -301,9 +301,14 @@ impl<'a, 'b> Pratt<'a, 'b> {
         if op.is_non_associative() && lhs.is_non_associative() {
             return Err(ParsingError::NonAssociativeOperator(lex.span()));
         }
-        self.typed_regex = matches!(op, BinaryOperator::Matches | BinaryOperator::MatchesNot);
+        let is_regex = matches!(op, BinaryOperator::Matches | BinaryOperator::MatchesNot);
+        self.typed_regex = is_regex;
 
-        let rhs = self.parse_expression(lex, op.binding_power().1)?;
+        let mut rhs = self.parse_expression(lex, op.binding_power().1)?;
+        if is_regex && let Expr::Leaf(Atom::Regex(r)) = rhs {
+            // Has interactions with pretty printing, but makes the interpreter easier.
+            rhs = Expr::Leaf(Atom::TypedRegex(r));
+        }
         Ok(Expr::node(op.expr(lhs, rhs), self.parser.arena))
     }
 

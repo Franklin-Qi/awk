@@ -347,7 +347,7 @@ fn test_parser_logical_operators() {
         rules: [
             (None, Some("(body (And (And awk::a awk::b) (Eq awk::c 3)))")),
             (None, Some("(body (Or (Or awk::a (Gt awk::b 2)) awk::c))")),
-            (None, Some("(body (Or (Matches 1 /a/) (And awk::b awk::c)))")),
+            (None, Some("(body (Or (Matches 1 @/a/) (And awk::b awk::c)))")),
             (None, Some("(body (Negation awk::a))")),
             (None, Some("(body (Negation (And awk::a awk::b)))")),
         ],
