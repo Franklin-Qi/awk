@@ -130,8 +130,16 @@ impl Interpreter<'_> {
                         OpCode::Raise => lhs ^ rhs,
                         OpCode::Modulo => lhs % rhs,
                         // Float values on boolean cmps are intentional.
-                        OpCode::Eq => Value::Float((lhs == rhs) as usize as _),
-                        OpCode::NEq => Value::Float((lhs != rhs) as usize as _),
+                        OpCode::Eq => Value::b2f(lhs == rhs),
+                        OpCode::NEq => Value::b2f(lhs != rhs),
+                        OpCode::Gt => Value::b2f(lhs > rhs),
+                        OpCode::Lt => Value::b2f(lhs < rhs),
+                        OpCode::GtE => Value::b2f(lhs >= rhs),
+                        OpCode::LtE => Value::b2f(lhs <= rhs),
+                        OpCode::And => todo!(),
+                        OpCode::Or => todo!(),
+                        OpCode::Matches => todo!(),
+                        OpCode::MatchesNot => todo!(),
                         OpCode::Concat => {
                             let mut buf = StdVec::with_capacity(
                                 lhs.string_size_hint() + rhs.string_size_hint(),
@@ -140,7 +148,7 @@ impl Interpreter<'_> {
                             rhs.write_string(&mut buf);
                             Value::String(buf.into())
                         }
-                        _ => todo!(),
+                        _ => unreachable!(),
                     };
                     self.registers.write(dest, val);
                 }

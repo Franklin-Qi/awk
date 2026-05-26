@@ -65,6 +65,10 @@ impl Value<'_> {
         }
     }
 
+    pub fn b2f(b: bool) -> Self {
+        Self::Float(b as usize as f64)
+    }
+
     pub fn write_string(&self, f: &mut Vec<u8>) {
         match self {
             Self::String(s) | Self::Regex(s) => f.extend_from_slice(s),
@@ -166,6 +170,55 @@ impl PartialEq for Value<'_> {
             (Self::Untyped | Self::Unassigned, _) | (_, Self::Untyped | Self::Unassigned) => false,
             (Self::Array(_), _) | (_, Self::Array(_)) => {
                 panic!("Attempted to use array in scalar context!")
+            }
+        }
+    }
+}
+
+impl PartialOrd for Value<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            // Numeric comparisons
+            (&Self::Float(lhs), Self::Float(rhs)) => lhs.partial_cmp(rhs),
+            (&Self::Bool(lhs), Self::Bool(rhs)) => lhs.partial_cmp(rhs),
+            (&Self::Float(f), &Self::Bool(b)) => f.partial_cmp(&(b as usize as _)),
+            (&Self::Bool(b), Self::Float(f)) => (b as usize as f64).partial_cmp(f),
+            // String-based comparisons
+            (Self::String(lhs) | Self::Regex(lhs), Self::String(rhs) | Self::Regex(rhs)) => {
+                lhs.as_ref().partial_cmp(rhs)
+            }
+            (&Self::Float(f), Self::String(s) | Self::Regex(s)) => {
+                f.to_string().as_bytes().partial_cmp(s)
+            }
+            (Self::String(s) | Self::Regex(s), &Self::Float(f)) => {
+                s.as_ref().partial_cmp(f.to_string().as_bytes())
+            }
+            (&Self::Bool(b), Self::String(s) | Self::Regex(s)) => {
+                (if b { b"1" } else { b"0" }).as_ref().partial_cmp(s)
+            }
+            (Self::String(s) | Self::Regex(s), &Self::Bool(b)) => {
+                s.as_ref().partial_cmp(if b { b"1" } else { b"0" })
+            }
+            (Self::Untyped | Self::Unassigned, Self::String(s) | Self::Regex(s)) => {
+                b"".as_ref().partial_cmp(s)
+            }
+            (Self::String(s) | Self::Regex(s), Self::Untyped | Self::Unassigned) => {
+                s.as_ref().partial_cmp(b"")
+            }
+            (Self::Array(_), _) | (_, Self::Array(_)) => {
+                panic!("Attempted to use array in scalar context!")
+            }
+            (Self::Untyped | Self::Unassigned, Self::Untyped | Self::Unassigned) => {
+                b"".partial_cmp(b"")
+            }
+            // Copyful comparisons
+            (lhs, rhs) => {
+                let mut str_buf: Vec<u8> = Vec::new();
+                str_buf.reserve_exact(lhs.string_size_hint() + rhs.string_size_hint());
+                lhs.write_string(&mut str_buf);
+                let midpoint = str_buf.len();
+                rhs.write_string(&mut str_buf);
+                str_buf[0..midpoint].partial_cmp(&str_buf[midpoint..])
             }
         }
     }
