@@ -169,20 +169,24 @@ impl Interpreter<'_> {
                     rhs.write_string(&mut buf);
                     self.registers.write(dest, Value::String(buf.into()));
                 }
-                Instruction::LoadUser((dest, src)) => {
+                Instruction::LoadUserScalar((dest, src)) => {
                     let val = self.symbols.lookup_user_scalar(src);
                     self.registers.write(dest, val.clone());
                 }
-                Instruction::LoadBultin((_dest, _src)) => todo!(),
+                Instruction::LoadUserArray((_dest, _src, _place)) => todo!(),
+                Instruction::LoadBuiltinScalar((_dest, _src)) => todo!(),
+                Instruction::LoadBuiltinArray((_dest, _src, _place)) => todo!(),
                 Instruction::LoadConst((dest, src)) => {
                     let val = self.consts.0.get_index(src.0 as _).unwrap().clone();
                     self.registers.write(dest, val);
                 }
-                Instruction::StoreUser((dest, src)) => {
+                Instruction::StoreUserScalar((dest, src)) => {
                     let val = self.registers.get(dest).clone();
                     self.symbols.write_user_val(src, val);
                 }
-                Instruction::StoreBuiltin((_dest, _src)) => todo!(),
+                Instruction::StoreUserArray((_dest, _src, _place)) => todo!(),
+                Instruction::StoreBuiltinScalar((_dest, _src)) => todo!(),
+                Instruction::StoreBuiltinArray((_dest, _src, _place)) => todo!(),
                 Instruction::IntrinsicCall((_dest, _code, _args)) => todo!(),
                 Instruction::UserCall((_dest, _code, _args)) => todo!(),
                 Instruction::IndirectCall((_dest, _code, _args)) => todo!(),

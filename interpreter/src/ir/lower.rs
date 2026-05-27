@@ -136,7 +136,7 @@ impl<'a> Code<'a> {
             Expr::Leaf(atom) => match atom {
                 Atom::Variable(Variable::User(ident)) => {
                     let src = self.symbols.register_user_var(ident, self.arena);
-                    self.bc.emit(Instruction::LoadUser((dest, src)));
+                    self.bc.emit(Instruction::LoadUserScalar((dest, src)));
                 }
                 &Atom::Number(n) => {
                     let src = self.register_const(Value::Float(n));
@@ -202,17 +202,99 @@ impl<'a> Code<'a> {
                     let next = self.following_instr(0);
                     self.bc.nth(jump).set_label(next);
                 }
-                ExprNode::BinaryPlaceOperation(BinaryPlaceOperator::Assignment, place, expr) => {
+                ExprNode::BinaryPlaceOperation(op, place, expr) => {
                     self.lower_expr_into(expr, dest);
-                    let Place::Variable(Variable::User(var)) = place else {
-                        todo!()
+
+                    let second_op = match op {
+                        BinaryPlaceOperator::Assignment => {
+                            self.store_place(place, dest);
+                            return;
+                        }
+                        BinaryPlaceOperator::AddAssign => Instruction::Add,
+                        BinaryPlaceOperator::SubAssign => Instruction::Subtract,
+                        BinaryPlaceOperator::MulAssign => Instruction::Multiply,
+                        BinaryPlaceOperator::DivAssign => Instruction::Divide,
+                        BinaryPlaceOperator::PowAssign => Instruction::Raise,
+                        BinaryPlaceOperator::ModAssign => Instruction::Modulo,
                     };
-                    let var = self.symbols.register_user_var(var, self.arena);
-                    self.bc.emit(Instruction::StoreUser((dest, var)));
+                    let lhs = self.alloc_reg();
+
+                    self.load_place(*lhs, place);
+                    self.bc.emit(second_op((dest, *lhs, dest)));
+                    self.store_place(place, dest);
+
+                    self.free_reg(lhs);
                 }
                 _ => todo!(),
             },
         }
+    }
+
+    fn load_place(&mut self, dest: Reg, place: &Place<'_>) {
+        match place {
+            Place::Record(_) => {
+                todo!()
+            }
+            Place::Variable(Variable::User(ident)) => {
+                let src = self.symbols.register_user_var(ident, self.arena);
+                self.bc.emit(Instruction::LoadUserScalar((dest, src)));
+            }
+            Place::Variable(var) => {
+                self.bc
+                    .emit(Instruction::LoadBuiltinScalar((dest, var_index(var))));
+            }
+            Place::Index(Variable::User(ident), index) => {
+                self.subsep_index(dest, index);
+                let src = self.symbols.register_user_var(ident, self.arena);
+                self.bc.emit(Instruction::LoadUserArray((dest, dest, src)));
+            }
+            Place::Index(var, index) => {
+                self.subsep_index(dest, index);
+                self.bc
+                    .emit(Instruction::LoadBuiltinArray((dest, dest, var_index(var))));
+            }
+        }
+    }
+
+    fn store_place(&mut self, place: &Place<'_>, src: Reg) {
+        match place {
+            Place::Record(_) => todo!(),
+            Place::Variable(Variable::User(ident)) => {
+                self.bc.emit(Instruction::StoreUserScalar((
+                    src,
+                    self.symbols.register_user_var(ident, self.arena),
+                )));
+            }
+            Place::Variable(var) => {
+                self.bc
+                    .emit(Instruction::StoreBuiltinScalar((src, var_index(var))));
+            }
+            Place::Index(Variable::User(ident), index) => {
+                let rhs = self.alloc_reg();
+                self.subsep_index(*rhs, index);
+                let place = self.symbols.register_user_var(ident, self.arena);
+                self.bc
+                    .emit(Instruction::StoreUserArray((src, *rhs, place)));
+                self.free_reg(rhs);
+            }
+            Place::Index(var, index) => {
+                let rhs = self.alloc_reg();
+                self.subsep_index(*rhs, index);
+                self.bc
+                    .emit(Instruction::StoreBuiltinArray((src, *rhs, var_index(var))));
+                self.free_reg(rhs);
+            }
+        }
+    }
+
+    fn subsep_index(&mut self, dest: Reg, index: &[Expr<'_>]) {
+        let rhs = self.alloc_reg();
+        self.lower_expr_into(&index[0], dest);
+        for i in &index[1..] {
+            self.lower_expr_into(i, *rhs);
+            self.bc.emit(Instruction::Concat((dest, dest, *rhs)));
+        }
+        self.free_reg(rhs);
     }
 
     fn alloc_reg(&mut self) -> LinearReg {
@@ -358,6 +440,11 @@ impl Deref for LinearReg {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+fn var_index(var: &Variable<'_>) -> NonLocal {
+    // SAFETY: it is repr(u16).
+    unsafe { *<*const Variable>::from(var).cast::<NonLocal>() }
 }
 
 #[cfg(debug_assertions)]

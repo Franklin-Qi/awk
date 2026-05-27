@@ -62,11 +62,15 @@ pub enum Instruction {
     Concat(BinaryArg),
 
     // Intrinsic operations
-    LoadUser(LoadStoreArg),
-    LoadBultin(LoadStoreArg),
-    LoadConst(LoadStoreArg),
-    StoreUser(LoadStoreArg),
-    StoreBuiltin(LoadStoreArg),
+    LoadUserScalar(MemScalarArg),
+    LoadUserArray(MemArrayArg),
+    LoadBuiltinScalar(MemScalarArg),
+    LoadBuiltinArray(MemArrayArg),
+    LoadConst(MemScalarArg),
+    StoreUserScalar(MemScalarArg),
+    StoreBuiltinScalar(MemScalarArg),
+    StoreUserArray(MemArrayArg),
+    StoreBuiltinArray(MemArrayArg),
     IntrinsicCall(CallArgs),
     UserCall(IndCallArgs),
     IndirectCall(CallArgs),
@@ -79,7 +83,8 @@ const _: () = const { assert!(size_of::<Instruction>() <= 8) };
 
 pub type UnaryArg = (Reg, Reg);
 pub type BinaryArg = (Reg, Reg, Reg);
-pub type LoadStoreArg = (Reg, NonLocal);
+pub type MemScalarArg = (Reg, NonLocal);
+pub type MemArrayArg = (Reg, Reg, NonLocal);
 pub type JumpArg = Label;
 pub type RetArg = Reg;
 pub type BranchArg = (Reg, Label, Label);
@@ -133,14 +138,21 @@ impl Display for Instruction {
             | Self::Modulo((dest, lhs, rhs)) => {
                 write!(f, "{dest} <- {op} {lhs}, {rhs}")
             }
-            Self::LoadUser((dest, src)) | Self::StoreUser((dest, src)) => {
+            Self::LoadUserScalar((dest, src)) | Self::StoreUserScalar((dest, src)) => {
                 write!(f, "{dest} <- {op} user[{src}]")
+            }
+            Self::LoadUserArray((dest, src, place)) | Self::StoreUserArray((dest, src, place)) => {
+                write!(f, "{dest} <- {op} user[{place}[{src}]]")
             }
             Self::LoadConst((dest, src)) => {
                 write!(f, "{dest} <- {op} mem[{src}]")
             }
-            Self::StoreBuiltin((dest, src)) | Self::LoadBultin((dest, src)) => {
+            Self::StoreBuiltinScalar((dest, src)) | Self::LoadBuiltinScalar((dest, src)) => {
                 write!(f, "{dest} <- {op} intrinsic[{src}]")
+            }
+            Self::LoadBuiltinArray((dest, src, place))
+            | Self::StoreBuiltinArray((dest, src, place)) => {
+                write!(f, "{dest} <- {op} intrinsic[{place}[{src}]]")
             }
             Self::Branch((cond, label_then, label_else)) => {
                 write!(f, "{op} {cond}, {label_then}, {label_else}")
@@ -185,11 +197,15 @@ impl Instruction {
             Self::Divide(_) => "div",
             Self::Raise(_) => "pow",
             Self::Modulo(_) => "mod",
-            Self::LoadUser(_) => "vload",
-            Self::LoadBultin(_) => "iload",
+            Self::LoadUserScalar(_) => "vsload",
+            Self::LoadBuiltinScalar(_) => "isload",
+            Self::LoadUserArray(_) => "vaload",
+            Self::LoadBuiltinArray(_) => "iaload",
             Self::LoadConst(_) => "cload",
-            Self::StoreUser(_) => "vstore",
-            Self::StoreBuiltin(_) => "istore",
+            Self::StoreUserScalar(_) => "vsstore",
+            Self::StoreBuiltinScalar(_) => "isstore",
+            Self::StoreUserArray(_) => "vastore",
+            Self::StoreBuiltinArray(_) => "iastore",
             Self::Copy(_) => "cpy",
             Self::IntrinsicCall(_) => "icall",
             Self::UserCall(_) => "ucall",

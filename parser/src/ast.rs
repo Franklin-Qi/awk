@@ -61,6 +61,7 @@ pub struct Identifier<'a> {
     pub literal: &'a str,
 }
 
+#[repr(u16)]
 #[derive(Clone, Copy)]
 pub enum Variable<'a> {
     User(Identifier<'a>),
