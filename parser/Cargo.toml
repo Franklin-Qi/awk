@@ -18,5 +18,8 @@ ahash.workspace = true
 derive_more.workspace = true
 ariadne = "0.6.0"
 
+[dev-dependencies]
+proptest = "1.6.0"
+
 [lints]
 workspace = true

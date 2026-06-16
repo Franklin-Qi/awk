@@ -8,7 +8,11 @@ mod diagnostics;
 mod idempotency;
 mod lex;
 mod pratt;
+#[cfg(test)]
+mod prop_tests;
 mod sexpr;
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;
 
@@ -750,7 +754,7 @@ impl<'a> Parser<'a> {
 }
 
 impl<'a> Ast<'a> {
-    fn new(arena: &'a Bump) -> Self {
+    pub(crate) fn new(arena: &'a Bump) -> Self {
         Self {
             loads: Vec::new_in(arena),
             begin: Vec::new_in(arena),
