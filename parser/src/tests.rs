@@ -5,11 +5,25 @@
 
 use bumpalo::Bump;
 
+use crate::diagnostics::ParsingError;
 use crate::{Ast, Lexer, Parser};
 
 fn parse<'a>(source: &'a str, arena: &'a Bump) -> super::Result<&'a Ast<'a>> {
     let parser = arena.alloc(Parser::new(arena));
     parser.parse_top(&mut Lexer::new(source.as_bytes(), arena), true)
+}
+
+fn parse_error_span(source: &str) -> std::ops::Range<usize> {
+    let arena = Bump::new();
+    let parser = arena.alloc(Parser::new(&arena));
+    match parser.parse_top(&mut Lexer::new(source.as_bytes(), &arena), true) {
+        Err(err) => err.span().expect("expected a span-bearing parse error"),
+        Ok(_) => panic!("expected parse error for {source:?}"),
+    }
+}
+
+fn spanned_snippet<'a>(source: &'a str, span: std::ops::Range<usize>) -> &'a str {
+    std::str::from_utf8(&source.as_bytes()[span]).expect("span out of bounds")
 }
 
 // Behold! The Holy Macro to rule them all.
@@ -508,4 +522,56 @@ fn test_parser_do_while() {
             (None, Some("(body (do-while (body (Print) (break)) (DecrementR awk::a)))")),
         ],
     });
+}
+
+#[test]
+fn test_parser_pratt_error_spans() {
+    let source = "{ 1 = x }";
+    let span = parse_error_span(source);
+    assert!(matches!(
+        parse(source, &Bump::new()),
+        Err(ParsingError::OperatorExpectsVariable(_))
+    ));
+    assert_eq!(spanned_snippet(source, span), "1 =");
+
+    let source = "{ ++1 }";
+    let span = parse_error_span(source);
+    assert_eq!(spanned_snippet(source, span), "++1");
+
+    let source = "{ 1[2] }";
+    let span = parse_error_span(source);
+    assert_eq!(spanned_snippet(source, span), "1[");
+
+    let source = "{ 1 + 2 = x }";
+    let span = parse_error_span(source);
+    assert_eq!(spanned_snippet(source, span), "1 + 2 =");
+
+    let source = "{ x in 2 }";
+    let span = parse_error_span(source);
+    assert_eq!(spanned_snippet(source, span), "2");
+
+    // Non-associative operators keep the offending token's span.
+    let source = "{ a == b == c }";
+    let span = parse_error_span(source);
+    assert!(matches!(
+        parse(source, &Bump::new()),
+        Err(ParsingError::NonAssociativeOperator(_))
+    ));
+    assert_eq!(spanned_snippet(source, span), "==");
+
+    let source = "{ (1 + 2 }";
+    let span = parse_error_span(source);
+    assert!(matches!(
+        parse(source, &Bump::new()),
+        Err(ParsingError::UnclosedParenthesisExpression(_))
+    ));
+    assert_eq!(spanned_snippet(source, span), "(1 + 2 }");
+
+    let source = "{ a[1 }";
+    let span = parse_error_span(source);
+    assert!(matches!(
+        parse(source, &Bump::new()),
+        Err(ParsingError::UnclosedArrayAccess(_))
+    ));
+    assert_eq!(spanned_snippet(source, span), "a[1 }");
 }
