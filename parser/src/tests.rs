@@ -509,3 +509,230 @@ fn test_parser_do_while() {
         ],
     });
 }
+
+#[test]
+fn test_parser_switch() {
+    let source = r#"
+        { switch (x) { case 1: print; case "a": print 2; default: print 3 } }
+        { switch (1 + 1) { case /pat/: print } }
+    "#;
+    test_parser!(source => {
+        rules: [
+            (
+                None,
+                Some(concat!(
+                    "(body (switch awk::x",
+                    " (case 1 (body (Print)))",
+                    " (case \"a\" (body (Print 2)))",
+                    " (default 2 (body (Print 3)))))"
+                ))
+            ),
+            (
+                None,
+                Some("(body (switch (Add 1 1) (case /pat/ (body (Print)))))")
+            ),
+        ],
+    });
+
+    test_parser!(is_err!(
+        "{ switch (x) { default: print; default: print } }",
+        "{ switch (x) { case a: print } }"
+    ));
+}
+
+#[test]
+fn test_parser_getline() {
+    let source = r#"
+        { getline }
+        { getline x }
+        { getline < "f" }
+        { getline x < "f" }
+        { "cmd" | getline }
+        { "cmd" | getline x }
+        { "cmd" |& getline }
+        { "cmd" |& getline x }
+    "#;
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (getline))")),
+            (None, Some("(body (getline awk::x))")),
+            (None, Some("(body (getline< \"f\"))")),
+            (None, Some("(body (getline< \"f\" awk::x))")),
+            (None, Some("(body (getline| \"cmd\"))")),
+            (None, Some("(body (getline| \"cmd\" awk::x))")),
+            (None, Some("(body (getline|& \"cmd\"))")),
+            (None, Some("(body (getline|& \"cmd\" awk::x))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_printf() {
+    let source = r#"
+        { printf "%d", 1, 2 }
+        { printf("%d", 1) }
+    "#;
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Printf \"%d\" 1 2))")),
+            (None, Some("(body (Printf \"%d\" 1))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_control_flow() {
+    let source = r"
+        { next }
+        { nextfile }
+        { continue }
+        { return }
+        { return 1 }
+        { exit }
+        { exit 1 }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (next))")),
+            (None, Some("(body (nextfile))")),
+            (None, Some("(body (continue))")),
+            (None, Some("(body (return))")),
+            (None, Some("(body (return 1))")),
+            (None, Some("(body (exit))")),
+            (None, Some("(body (exit 1))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_redirection() {
+    let source = r#"
+        { print > "out" }
+        { print >> "out" }
+        { print | "cmd" }
+        { print |& "cmd" }
+    "#;
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Print (> \"out\")))")),
+            (None, Some("(body (Print (>> \"out\")))")),
+            (None, Some("(body (Print (| \"cmd\")))")),
+            (None, Some("(body (Print (|& \"cmd\")))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_regex_matching() {
+    let source = r"
+        { a ~ /b/ }
+        { a !~ /b/ }
+        { /x/ ~ /y/ }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Matches awk::a @/b/))")),
+            (None, Some("(body (MatchesNot awk::a @/b/))")),
+            (None, Some("(body (Matches /x/ @/y/))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_function_calls() {
+    let source = r"
+        { foo(1, 2) }
+        { @bar(3) }
+        { foo::baz(a, b + 1) }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (awk::foo 1 2))")),
+            (None, Some("(body (@awk::bar 3))")),
+            (None, Some("(body (foo::baz awk::a (Add awk::b 1)))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_compound_assignments() {
+    let source = r"
+        { a -= 1 }
+        { a *= 2 }
+        { a /= 3 }
+        { a ^= 4 }
+        { a %= 5 }
+        { a /= /pat/ }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (SubAssign awk::a 1))")),
+            (None, Some("(body (MulAssign awk::a 2))")),
+            (None, Some("(body (DivAssign awk::a 3))")),
+            (None, Some("(body (PowAssign awk::a 4))")),
+            (None, Some("(body (ModAssign awk::a 5))")),
+            (None, Some("(body (DivAssign awk::a /pat/))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_builtin_variables() {
+    let source = r"
+        { NR; NF; FS; RS; OFS; ORS; FILENAME; ARGC; ARGV; SUBSEP; FNR; OFMT; RSTART; RLENGTH; ENVIRON }
+    ";
+    test_parser!(source => {
+        rules: [(
+            None,
+            Some(concat!(
+                "(body NR NF FS RS OFS ORS FILENAME ARGC ARGV SUBSEP FNR OFMT ",
+                "RSTART RLENGTH ENVIRON)"
+            ))
+        )],
+    });
+}
+
+#[test]
+fn test_parser_concurrent() {
+    let source = r"
+        @concurrent { print 1 }
+        @concurrent $1 { print 2 }
+    ";
+    test_parser!(source => {
+        concurrent: [
+            (None, Some("(body (Print 1))")),
+            (Some("(Record 1)"), Some("(body (Print 2))")),
+        ],
+    });
+}
+
+#[test]
+fn test_parser_namespace_directive() {
+    let source = r#"
+        @namespace "myns";
+        function bar() { print }
+    "#;
+    test_parser!(source => {
+        functions: [("myns::bar", &[], "(body (Print))")],
+    });
+}
+
+#[test]
+fn test_parser_unary_and_divide() {
+    let source = r"
+        { -a; +a; !a; a / b; a + b - c }
+        { int(a) }
+    ";
+    test_parser!(source => {
+        rules: [
+            (
+                None,
+                Some(concat!(
+                    "(body (Negative awk::a) (ToInt awk::a) (Negation awk::a) ",
+                    "(Divide awk::a awk::b) (Subtract (Add awk::a awk::b) awk::c))"
+                ))
+            ),
+            (None, Some("(body (awk::int awk::a))")),
+        ],
+    });
+}

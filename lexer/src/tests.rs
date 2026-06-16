@@ -355,3 +355,286 @@ fn lexer_test_unicode_escape_eight_digits() {
         &[Token::String(b"2".into())]
     );
 }
+
+#[test]
+fn lexer_test_operators() {
+    let arena = Bump::new();
+    let str = b"~ !~ | |& >> ** **= ^= += -= *= %= == != <= >= < > && || !";
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::Matching,
+            Token::NotMatching,
+            Token::Pipe,
+            Token::DoublePipe,
+            Token::AppendPipe,
+            Token::Circumflex,
+            Token::CaretAssign,
+            Token::CaretAssign,
+            Token::PlusAssign,
+            Token::MinusAssign,
+            Token::StarAssign,
+            Token::PercentAssign,
+            Token::EqualTo,
+            Token::NotEqualTo,
+            Token::LesserOrEqualThan,
+            Token::GreaterOrEqualThan,
+            Token::LesserThan,
+            Token::GreaterThan,
+            Token::BooleanAnd,
+            Token::BooleanOr,
+            Token::Negation,
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_slash_assign() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"a/=1", &arena, false, false),
+        &[
+            Token::Identifier(Identifier { namespace: None, literal: "a" }),
+            Token::SlashAssign,
+            Token::SmallInt(1),
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_control_flow_keywords() {
+    let arena = Bump::new();
+    let str = b"switch case default getline printf next nextfile exit return continue break";
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::Switch,
+            Token::Case,
+            Token::Default,
+            Token::Getline,
+            Token::Printf,
+            Token::Next,
+            Token::NextFile,
+            Token::Exit,
+            Token::Return,
+            Token::Continue,
+            Token::Break,
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_builtin_variables() {
+    let arena = Bump::new();
+    let str =
+        b"NR NF FS RS OFS ORS FILENAME ARGC ARGV SUBSEP FNR ARGIND OFMT RSTART RLENGTH ENVIRON";
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::NrVariable,
+            Token::NfVariable,
+            Token::FsVariable,
+            Token::RsVariable,
+            Token::OfsVariable,
+            Token::OrsVariable,
+            Token::FilenameVariable,
+            Token::ArgcVariable,
+            Token::ArgvVariable,
+            Token::SubsepVariable,
+            Token::FnrVariable,
+            Token::ArgindVariable,
+            Token::OfmtVariable,
+            Token::RstartVariable,
+            Token::RlengthVariable,
+            Token::EnvironVariable,
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_typed_regex() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"@/pat/", &arena, false, false),
+        &[Token::TypedRegex(b"pat".into())]
+    );
+}
+
+#[test]
+fn lexer_test_comments() {
+    let arena = Bump::new();
+    let str = b"print 1 # comment\nprint 2";
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::Print,
+            Token::SmallInt(1),
+            Token::Newline,
+            Token::Print,
+            Token::SmallInt(2),
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_indirect_call() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"@foo @ns::bar", &arena, false, false),
+        &[
+            Token::IndirectCall(Identifier { namespace: None, literal: "foo" }),
+            Token::IndirectCall(Identifier { namespace: Some("ns"), literal: "bar" }),
+        ]
+    );
+}
+
+#[test]
+#[should_panic]
+fn lexer_test_indirect_call_posix() {
+    let arena = Bump::new();
+    lex(b"@foo", &arena, true, false);
+}
+
+#[test]
+fn lexer_test_concurrent_directive() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"@concurrent", &arena, false, false),
+        &[Token::ConcurrentDirective]
+    );
+}
+
+#[test]
+fn lexer_test_load_and_namespace_directives() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(br#"@load "lib.so" @namespace "ns""#, &arena, false, false),
+        &[
+            Token::LoadDirective,
+            Token::String(b"lib.so".into()),
+            Token::NamespaceDirective,
+            Token::String(b"ns".into()),
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_regex_literals() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"/abc/", &arena, false, false),
+        &[Token::Regex(b"abc".into())]
+    );
+    assert_eq!(
+        &lex(b"/a\\/b/", &arena, false, false),
+        &[Token::Regex(b"a/b".into())]
+    );
+    assert_eq!(
+        &lex(b"x~/dot+/", &arena, false, false),
+        &[
+            Token::Identifier(Identifier { namespace: None, literal: "x" }),
+            Token::Matching,
+            Token::Regex(b"dot+".into()),
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_switch_snippet() {
+    let arena = Bump::new();
+    let str = br#"switch (x) { case 1: print; default: break }"#;
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::Switch,
+            Token::OpenParent,
+            Token::Identifier(Identifier { namespace: None, literal: "x" }),
+            Token::ClosedParent,
+            Token::OpenBrace,
+            Token::Case,
+            Token::SmallInt(1),
+            Token::Colon,
+            Token::Print,
+            Token::Semicolon,
+            Token::Default,
+            Token::Colon,
+            Token::Break,
+            Token::ClosedBrace,
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_getline_redirection() {
+    let arena = Bump::new();
+    let str = br#"getline getline x < "f" "cmd" | getline "cmd" |& getline"#;
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::Getline,
+            Token::Getline,
+            Token::Identifier(Identifier { namespace: None, literal: "x" }),
+            Token::LesserThan,
+            Token::String(b"f".into()),
+            Token::String(b"cmd".into()),
+            Token::Pipe,
+            Token::Getline,
+            Token::String(b"cmd".into()),
+            Token::DoublePipe,
+            Token::Getline,
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_print_redirection() {
+    let arena = Bump::new();
+    let str = br#"print > "out" print >> "out" print | "cmd" print |& "cmd""#;
+    assert_eq!(
+        &lex(str, &arena, false, false),
+        &[
+            Token::Print,
+            Token::GreaterThan,
+            Token::String(b"out".into()),
+            Token::Print,
+            Token::AppendPipe,
+            Token::String(b"out".into()),
+            Token::Print,
+            Token::Pipe,
+            Token::String(b"cmd".into()),
+            Token::Print,
+            Token::DoublePipe,
+            Token::String(b"cmd".into()),
+        ]
+    );
+}
+
+#[test]
+fn lexer_test_func_keyword() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"func function", &arena, false, false),
+        &[Token::Function, Token::Function]
+    );
+}
+
+#[test]
+fn lexer_test_func_keyword_posix() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"func", &arena, true, false),
+        &[Token::Identifier(Identifier {
+            namespace: None,
+            literal: "func"
+        })]
+    );
+}
+
+#[test]
+fn lexer_test_backslash_escape_in_string() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\n\\t\\\\\"", &arena, false, false),
+        &[Token::String(b"\n\t\\".into())]
+    );
+}
