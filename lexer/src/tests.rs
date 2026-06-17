@@ -10,7 +10,7 @@ use bumpalo::{
     collections::{CollectIn, Vec},
 };
 
-use crate::{Identifier, Token};
+use crate::{Identifier, LocaleEncoding, Token};
 
 fn lex<'a>(
     src: &'a [u8],
@@ -18,7 +18,17 @@ fn lex<'a>(
     posix_strict: bool,
     gnu_strict: bool,
 ) -> Vec<'a, Token<'a>> {
-    Token::lex(src, arena, posix_strict, gnu_strict)
+    lex_with_encoding(src, arena, posix_strict, gnu_strict, LocaleEncoding::utf8())
+}
+
+fn lex_with_encoding<'a>(
+    src: &'a [u8],
+    arena: &'a Bump,
+    posix_strict: bool,
+    gnu_strict: bool,
+    encoding: LocaleEncoding,
+) -> Vec<'a, Token<'a>> {
+    Token::lex_with_encoding(src, arena, posix_strict, gnu_strict, encoding)
         .collect_in::<Result<Vec<_>, _>>(arena)
         .unwrap()
 }
@@ -357,6 +367,105 @@ fn lexer_test_unicode_escape_eight_digits() {
     assert_eq!(
         &lex(b"\"\\u00000032\"", &arena, false, false),
         &[Token::String(b"2".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_iso8859_1() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex_with_encoding(
+            b"\"\\u00e9\"",
+            &arena,
+            false,
+            false,
+            LocaleEncoding::iso_8859_1()
+        ),
+        &[Token::String(b"\xe9".into())]
+    );
+    assert_eq!(
+        &lex_with_encoding(
+            b"\"\\u0041\"",
+            &arena,
+            false,
+            false,
+            LocaleEncoding::iso_8859_1()
+        ),
+        &[Token::String(b"A".into())]
+    );
+    assert_eq!(
+        &lex_with_encoding(
+            b"\"\\u4e2d\"",
+            &arena,
+            false,
+            false,
+            LocaleEncoding::iso_8859_1()
+        ),
+        &[Token::String(b"?".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_ascii_locale() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex_with_encoding(
+            b"\"\\u0041\"",
+            &arena,
+            false,
+            false,
+            LocaleEncoding::ascii()
+        ),
+        &[Token::String(b"A".into())]
+    );
+    assert_eq!(
+        &lex_with_encoding(
+            b"\"\\u00e9\"",
+            &arena,
+            false,
+            false,
+            LocaleEncoding::ascii()
+        ),
+        &[Token::String(b"?".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_invalid_codepoint() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex_with_encoding(
+            b"\"\\u110000\"",
+            &arena,
+            false,
+            false,
+            LocaleEncoding::utf8()
+        ),
+        &[Token::String(b"?".into())]
+    );
+    assert_eq!(
+        &lex_with_encoding(b"\"\\uD800\"", &arena, false, false, LocaleEncoding::utf8()),
+        &[Token::String(b"?".into())]
+    );
+}
+
+#[test]
+fn locale_encoding_from_locale_name() {
+    assert_eq!(
+        LocaleEncoding::from_locale_name("C"),
+        LocaleEncoding::ascii()
+    );
+    assert_eq!(
+        LocaleEncoding::from_locale_name("POSIX"),
+        LocaleEncoding::ascii()
+    );
+    assert_eq!(
+        LocaleEncoding::from_locale_name("en_US.UTF-8"),
+        LocaleEncoding::utf8()
+    );
+    assert_eq!(
+        LocaleEncoding::from_locale_name("fr_FR.ISO-8859-1"),
+        LocaleEncoding::iso_8859_1()
     );
 }
 

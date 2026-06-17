@@ -6,6 +6,8 @@
 #[cfg(test)]
 mod tests;
 
+mod locale_encoding;
+
 use core::str;
 use std::{
     cmp::Ordering,
@@ -15,6 +17,7 @@ use std::{
 };
 
 use bumpalo::{Bump, collections::Vec};
+pub use locale_encoding::LocaleEncoding;
 use logos::{Logos, Skip};
 pub use logos::{Span, SpannedIter};
 use memchr::{memchr, memchr3};
@@ -314,6 +317,7 @@ pub struct Extra {
     arena: NonNull<Bump>,
     posix_strict: bool,
     gnu_strict: bool,
+    encoding: LocaleEncoding,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -354,6 +358,22 @@ impl<'a> Token<'a> {
         posix_strict: bool,
         gnu_strict: bool,
     ) -> logos::Lexer<'a, Self> {
+        Self::lex_with_encoding(
+            source,
+            arena,
+            posix_strict,
+            gnu_strict,
+            LocaleEncoding::detect(),
+        )
+    }
+
+    pub fn lex_with_encoding(
+        source: &'a [u8],
+        arena: &'a Bump,
+        posix_strict: bool,
+        gnu_strict: bool,
+        encoding: LocaleEncoding,
+    ) -> logos::Lexer<'a, Self> {
         Lexer::with_extras(
             source,
             Extra {
@@ -361,6 +381,7 @@ impl<'a> Token<'a> {
                 arena: NonNull::from_ref(arena),
                 posix_strict,
                 gnu_strict,
+                encoding,
             },
         )
     }
@@ -445,6 +466,7 @@ fn parse_content<'a, const REGEX: bool, const DELIMITER: char>(
                     &rest[i..],
                     out.to_mut(lex.extras.arena()),
                     lex.extras.posix_strict,
+                    lex.extras.encoding,
                 )?;
                 start = i + consumed;
             }
@@ -462,6 +484,7 @@ fn parse_escape<const REGEX: bool>(
     slice: &[u8],
     out: &mut Vec<u8>,
     posix_strict: bool,
+    encoding: LocaleEncoding,
 ) -> Result<usize> {
     let mut count = 2;
     let is_oct = |x: char| ('0'..'8').contains(&x);
@@ -521,13 +544,7 @@ fn parse_escape<const REGEX: bool>(
                 count += num_digits;
 
                 let codepoint = parse_hex_digits(&slice[2..2 + num_digits]);
-
-                // FIXME: assumes UTF-8 locale; replacement character and encoding may differ
-                // for non-UTF-8 locales.
-                let c = char::from_u32(codepoint).unwrap_or('\u{FFFD}');
-                let mut buf = [0u8; 4];
-                let encoded = c.encode_utf8(&mut buf);
-                out.extend_from_slice_copy(encoded.as_bytes());
+                encoding.encode_unicode_escape(codepoint, out);
 
                 return Ok(count);
             }
