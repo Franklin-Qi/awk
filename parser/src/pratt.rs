@@ -269,10 +269,12 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     name.literal.to_string(),
                 ));
             }
+            let span = lex.span();
+            let qualified = name.try_qualify(self.parser.namespace, &span)?;
             self.parser.parse_function_call(
                 lex,
-                |args| ExprNode::FunctionCall(name.qualify(self.parser.namespace), args),
-                lex.span(),
+                move |args| ExprNode::FunctionCall(qualified, args),
+                span,
             )
         } else if let Some(builtin) = next.maps_to_builtin() {
             self.parser.parse_function_call(
@@ -289,16 +291,17 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     name.literal.to_string(),
                 ));
             }
-            let name = Variable::User(name.qualify(self.parser.namespace));
+            let span = lex.span();
+            let name = Variable::User(name.try_qualify(self.parser.namespace, &span)?);
             self.parser.parse_function_call(
                 lex,
-                |args| ExprNode::IndirectCall(name, args),
-                lex.span(),
+                move |args| ExprNode::IndirectCall(name, args),
+                span,
             )
         } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed() {
             let name = match self.parser.get_place(lex, next) {
                 Ok(var) => var.to_string(),
-                Err(tok) => format!("{tok:?}"),
+                Err(err) => err.to_string(),
             };
             Err(ParsingError::SpecialVariableCall(lex.span(), name))
         } else {

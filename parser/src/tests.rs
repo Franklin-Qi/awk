@@ -183,6 +183,18 @@ fn test_parser_invalid_patterns() {
 }
 
 #[test]
+fn test_parser_reserved_qualified_identifiers() {
+    test_parser!(is_err!(
+        "{ if::while }",
+        "{ foo::while }",
+        "{ while::foo }",
+        "@namespace \"if\"; BEGIN {}",
+        "function foo::while() {}",
+        "function while::foo() {}"
+    ));
+}
+
+#[test]
 fn test_parser_non_assoc() {
     test_parser!(is_err!(
         "a == b == c",
