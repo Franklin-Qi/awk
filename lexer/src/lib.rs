@@ -23,7 +23,6 @@ use thiserror::Error;
 pub type Lexer<'a> = logos::Lexer<'a, Token<'a>>;
 pub type Result<T, E = LexingError> = std::result::Result<T, E>;
 
-// TODO: check wnat GNU does about potentially reserved `@ident`; add error branch if so.
 #[derive(Logos, Debug, PartialEq)]
 #[logos(utf8 = false)]
 #[logos(skip(r"(?&ignore)"))]
@@ -34,8 +33,10 @@ pub type Result<T, E = LexingError> = std::result::Result<T, E>;
 #[logos(subpattern ignore_with_nl = r"(?:(?&ignore)|\n)*")]
 #[logos(error(LexingError, callback = |lex| LexingError::unexpected(lex)))]
 pub enum Token<'a> {
-    #[regex("(-128|(-)?(12[0-7]|1[01][0-9]|[1-9]?[0-9]))", parse_i8, priority = 9)]
-    SmallInt(i8),
+    #[regex(r"(-)?\d+", parse_num, priority = 9)]
+    Numeric,
+    // Not emitted by Logos directly.
+    Integer(i32),
     #[regex(r"(-)?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?", parse_float, priority = 8)]
     #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", parse_float)]
     Number(f64),
@@ -100,6 +101,82 @@ pub enum Token<'a> {
     #[token("function", accept_expression)]
     #[token("func", |lex| parse_non_posix_keyword(lex, Token::Function))]
     Function,
+    #[token("length", accept_expression)]
+    Length,
+    #[token("substr", accept_expression)]
+    Substr,
+    #[token("split", accept_expression)]
+    Split,
+    #[token("sub", accept_expression)]
+    Sub,
+    #[token("gsub", accept_expression)]
+    Gsub,
+    #[token("match", accept_expression)]
+    MatchFn,
+    #[token("index", accept_expression)]
+    Index,
+    #[token("sprintf", accept_expression)]
+    Sprintf,
+    #[token("toupper", accept_expression)]
+    Toupper,
+    #[token("tolower", accept_expression)]
+    Tolower,
+    #[token("gensub", |lex| parse_non_posix_keyword(lex, Token::Gensub))]
+    Gensub,
+    #[token("patsplit", |lex| parse_non_posix_keyword(lex, Token::Patsplit))]
+    Patsplit,
+    #[token("strtonum", |lex| parse_non_posix_keyword(lex, Token::Strtonum))]
+    Strtonum,
+    #[token("close", accept_expression)]
+    Close,
+    #[token("fflush", accept_expression)]
+    Fflush,
+    #[token("system", accept_expression)]
+    System,
+    #[token("int", accept_expression)]
+    Int,
+    #[token("sqrt", accept_expression)]
+    Sqrt,
+    #[token("exp", accept_expression)]
+    Exp,
+    #[token("log", accept_expression)]
+    Log,
+    #[token("sin", accept_expression)]
+    Sin,
+    #[token("cos", accept_expression)]
+    Cos,
+    #[token("atan2", accept_expression)]
+    Atan2,
+    #[token("rand", accept_expression)]
+    Rand,
+    #[token("srand", accept_expression)]
+    Srand,
+    #[token("systime", |lex| parse_non_posix_keyword(lex, Token::Systime))]
+    Systime,
+    #[token("mktime", |lex| parse_non_posix_keyword(lex, Token::Mktime))]
+    Mktime,
+    #[token("strftime", |lex| parse_non_posix_keyword(lex, Token::Strftime))]
+    Strftime,
+    #[token("typeof", |lex| parse_non_posix_keyword(lex, Token::Typeof))]
+    Typeof,
+    #[token("isarray", |lex| parse_non_posix_keyword(lex, Token::Isarray))]
+    Isarray,
+    #[token("asort", |lex| parse_non_posix_keyword(lex, Token::Asort))]
+    Asort,
+    #[token("asorti", |lex| parse_non_posix_keyword(lex, Token::Asorti))]
+    Asorti,
+    #[token("and", |lex| parse_non_posix_keyword(lex, Token::And))]
+    And,
+    #[token("or", |lex| parse_non_posix_keyword(lex, Token::Or))]
+    Or,
+    #[token("xor", |lex| parse_non_posix_keyword(lex, Token::Xor))]
+    Xor,
+    #[token("compl", |lex| parse_non_posix_keyword(lex, Token::Compl))]
+    Compl,
+    #[token("lshift", |lex| parse_non_posix_keyword(lex, Token::Lshift))]
+    Lshift,
+    #[token("rshift", |lex| parse_non_posix_keyword(lex, Token::Rshift))]
+    Rshift,
     #[token("NR", accept_expression)]
     NrVariable,
     #[token("NF", accept_expression)]
@@ -484,9 +561,12 @@ fn parse_float(lex: &mut Lexer<'_>) -> f64 {
     parse_ident(lex, ..).parse().unwrap_or(0.)
 }
 
-fn parse_i8(lex: &mut Lexer<'_>) -> i8 {
-    // SAFETY: The regex matchin ensures it is well-formed and in [-128, 127].
-    unsafe { parse_ident(lex, ..).parse().unwrap_unchecked() }
+fn parse_num<'a>(lex: &mut Lexer<'a>) -> Token<'a> {
+    if let Ok(num) = parse_ident(lex, ..).parse() {
+        Token::Integer(num)
+    } else {
+        Token::Number(parse_float(lex))
+    }
 }
 
 fn parse_non_posix_keyword<'a>(lex: &mut Lexer<'a>, other: Token<'a>) -> Token<'a> {

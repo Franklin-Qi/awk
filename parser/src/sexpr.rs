@@ -190,6 +190,13 @@ impl Debug for Expr<'_> {
                     }
                     write!(f, ")")
                 }
+                ExprNode::BuiltinCall(ident, args) => {
+                    write!(f, "({ident:?}")?;
+                    for arg in args {
+                        write!(f, " {arg:?}")?;
+                    }
+                    write!(f, ")")
+                }
                 ExprNode::UnaryOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
                 ExprNode::BinaryPlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
@@ -292,7 +299,7 @@ impl Debug for Atom<'_> {
             Self::Variable(var) => write!(f, "{var:?}"),
             Self::String(str) => write!(f, "{str:?}"),
             Self::Number(num) => write!(f, "{num}"),
-            Self::SmallInt(num) => write!(f, "{num}"),
+            Self::Integer(num) => write!(f, "{num}"),
             Self::Regex(rgx) => write!(f, "/{rgx}/"),
             Self::TypedRegex(rgx) => write!(f, "@/{rgx}/"),
             Self::BigInt() | Self::BigFloat() => unimplemented!(),
