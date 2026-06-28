@@ -4,6 +4,7 @@
 // files that was distributed with this source code.
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
+use either::Either;
 use lexer::{LexingError, Span};
 use thiserror::Error;
 
@@ -59,8 +60,8 @@ pub enum ParsingError {
     FunctionCallSeparatedIdent(Span),
     #[error("Missing closing parenthesis `(` in function call to `{}`.", .1)]
     FunctionCallUnclosed(Span, String),
-    #[error("Expected to be an identifier.")]
-    ExpectedIdentifier(Span),
+    #[error("Expected to be a valid identifier.")]
+    ExpectedIdentifier(Span, Option<Either<Span, Span>>),
     #[error("Expected an unary operation.")]
     ExpectedUnaryOperator(Span),
     #[error("Expected a binary operation")]
@@ -113,7 +114,7 @@ impl ParsingError {
             Self::FunctionCallMissingParenthesis(span) => Some(span.clone()),
             Self::FunctionCallSeparatedIdent(span) => Some(span.clone()),
             Self::FunctionCallUnclosed(span, _) => Some(span.clone()),
-            Self::ExpectedIdentifier(span) => Some(span.clone()),
+            Self::ExpectedIdentifier(span, _) => Some(span.clone()),
             Self::ExpectedUnaryOperator(span) => Some(span.clone()),
             Self::ExpectedBinaryOperator(span) => Some(span.clone()),
             Self::ExpectedPlaceOperator(span) => Some(span.clone()),
@@ -155,8 +156,25 @@ impl ParsingError {
                 "This is only valid in some contexts, like a right-hand assignment or a function argument.",
             ),
             Self::NonAssociativeOperator(_) => Some(
-                "Some operators can't be chained to avoid logical errors, such as comparison ones.\nExample: write `a == b && b == c` instead of `a == b == c`.",
+                "Some operators can't be chained to avoid logical errors, such as comparison ones.\n\
+                Example: write `a == b && b == c` instead of `a == b == c`.",
             ),
+            Self::ExpectedIdentifier(_, _) => Some(
+                "Valid identifiers are sequences of ASCII letters, numbers and underscores, not \
+                starting with a number.\nAdditionally, these must not match keywords (`if`, \
+                `while`, etc.) and built-in functions.\n\nNote: qualified identifiers, like \
+                `foo::bar`, must not have spaces around the `::`.",
+            ),
+            _ => None,
+        }
+    }
+    fn secondary(&self) -> Option<(&'static str, Span, i32)> {
+        match self {
+            Self::ExpectedIdentifier(_, Some(span)) => Some((
+                "Unexpected space.",
+                span.clone().into_inner(),
+                2 * span.is_left() as i32,
+            )),
             _ => None,
         }
     }
@@ -167,6 +185,8 @@ pub fn report_error<'a>(
     name: &'a str,
     source: &'a [u8],
 ) -> super::AriadneErr<'a> {
+    // TODO: invert the interface, so error types set the diagnostic labels.
+    // TODO: use a shared ariadne instance so we can also emit warnings.
     let span = error.span().unwrap_or(source.len()..source.len());
     let source = str::from_utf8(source).unwrap();
     let mut report = Report::build(ReportKind::Error, (name, span.clone()))
@@ -174,8 +194,17 @@ pub fn report_error<'a>(
         .with_label(
             Label::new((name, span.clone()))
                 .with_message(format!("{error}"))
-                .with_color(Color::Red),
+                .with_color(Color::Red)
+                .with_order(1),
         );
+    if let Some((str, span, order)) = error.secondary() {
+        report.add_label(
+            Label::new((name, span))
+                .with_message(str)
+                .with_color(Color::Yellow)
+                .with_order(order),
+        );
+    }
     if let Some(str) = error.hint() {
         report.set_help(str);
     }

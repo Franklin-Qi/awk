@@ -17,7 +17,7 @@ use crate::{
 pub struct Lexer<'a> {
     inner: Peekable<SpannedIter<'a, Token<'a>>>,
     span: Span,
-    // source: &'a [u8],
+    source: &'a [u8],
 }
 
 type LexItem<'a> = <Lexer<'a> as Iterator>::Item;
@@ -28,7 +28,7 @@ impl<'a> Lexer<'a> {
             // TODO: wire in POSIX & GNU strict conformance.
             inner: Token::lex(source, arena, false, false).spanned().peekable(),
             span: Span::default(),
-            // source,
+            source,
         }
     }
 
@@ -77,9 +77,9 @@ impl<'a> Lexer<'a> {
         {
             Ok(ident)
         } else {
-            Err(ParsingError::UnexpectedToken(
+            Err(ParsingError::ExpectedIdentifier(
                 self.peeked_span().unwrap_or(self.span()),
-                "expected an identifier.".into(),
+                None,
             ))
         }
     }
@@ -182,6 +182,13 @@ impl<'a> Lexer<'a> {
     pub fn is_yuxtaposed(&mut self) -> bool {
         self.peeked_span().is_ok_and(|x| x.start == self.span.end)
     }
+
+    /// # Safety
+    ///
+    /// The current token must match UTF-8 source.
+    pub unsafe fn src_as_str(&self) -> &'a str {
+        unsafe { str::from_utf8_unchecked(&self.source[self.span()]) }
+    }
 }
 
 impl<'a> Iterator for Lexer<'a> {
@@ -197,6 +204,7 @@ pub trait TokenExt {
     fn is_prefix_op(&self) -> bool;
     fn is_atom(&self) -> bool;
     fn is_expr_start(&self) -> bool;
+    fn is_ident_place(&self) -> bool;
     fn is_place(&self) -> bool;
     fn is_pattern_start(&self) -> bool;
     fn maps_to_command(&self) -> Option<Command>;
@@ -233,10 +241,11 @@ impl TokenExt for Token<'_> {
                 Token::IndirectCall(_) | Token::Getline | Token::OpenParent
             )
     }
-    fn is_place(&self) -> bool {
+    fn is_ident_place(&self) -> bool {
         matches!(
             self,
-            Token::NrVariable
+            Token::Identifier(_)
+                | Token::NrVariable
                 | Token::NfVariable
                 | Token::FsVariable
                 | Token::RsVariable
@@ -251,9 +260,10 @@ impl TokenExt for Token<'_> {
                 | Token::RstartVariable
                 | Token::RlengthVariable
                 | Token::EnvironVariable
-                | Token::Identifier(_)
-                | Token::Record
         )
+    }
+    fn is_place(&self) -> bool {
+        matches!(self, Token::Record) || self.is_ident_place()
     }
     fn is_pattern_start(&self) -> bool {
         self.is_expr_start() || self.maps_to_special_pat().is_some()

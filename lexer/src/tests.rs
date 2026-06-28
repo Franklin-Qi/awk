@@ -101,10 +101,7 @@ fn lexer_test_uu_extensions() {
     let arena = Bump::new();
     assert_eq!(
         lex(b"@concurrent", &arena, false, true),
-        &[Token::IndirectCall(Identifier {
-            namespace: None,
-            literal: "concurrent"
-        })]
+        &[Token::IndirectCall(Identifier { literal: "concurrent" })]
     );
 }
 
@@ -114,8 +111,8 @@ fn lexer_test_gnu_pattern() {
     assert_eq!(
         &lex(b"BEGINFILE ENDFILE", &arena, true, false),
         &[
-            Token::Identifier(Identifier { namespace: None, literal: "BEGINFILE" }),
-            Token::Identifier(Identifier { namespace: None, literal: "ENDFILE" })
+            Token::Identifier(Identifier { literal: "BEGINFILE" }),
+            Token::Identifier(Identifier { literal: "ENDFILE" })
         ]
     );
 }
@@ -166,13 +163,14 @@ fn lexer_test_ident_rules_non_posix() {
         &lex(b"1a::a a::1a _a", &arena, false, false),
         &[
             Token::Integer(1),
-            Token::Identifier(Identifier { namespace: Some("a"), literal: "a" }),
-            Token::Identifier(Identifier { namespace: None, literal: "a" }),
-            Token::Colon,
-            Token::Colon,
+            Token::Identifier(Identifier { literal: "a" }),
+            Token::PathSpec,
+            Token::Identifier(Identifier { literal: "a" }),
+            Token::Identifier(Identifier { literal: "a" }),
+            Token::PathSpec,
             Token::Integer(1),
-            Token::Identifier(Identifier { namespace: None, literal: "a" }),
-            Token::Identifier(Identifier { namespace: None, literal: "_a" })
+            Token::Identifier(Identifier { literal: "a" }),
+            Token::Identifier(Identifier { literal: "_a" })
         ]
     );
 }
@@ -203,7 +201,7 @@ fn lexer_test_general_tokens() {
             Token::BeginPattern,
             Token::OpenBrace,
             Token::Print,
-            Token::Identifier(Identifier { namespace: None, literal: "a" }),
+            Token::Identifier(Identifier { literal: "a" }),
             Token::Plus,
             Token::Integer(1),
             Token::ClosedBrace,
@@ -216,7 +214,9 @@ fn lexer_test_general_tokens() {
             Token::Record,
             Token::Integer(1),
             Token::EqualTo,
-            Token::Identifier(Identifier { namespace: Some("foo"), literal: "bar" }),
+            Token::Identifier(Identifier { literal: "foo" }),
+            Token::PathSpec,
+            Token::Identifier(Identifier { literal: "bar" }),
             Token::ClosedBrace,
             Token::Newline
         ]
@@ -232,7 +232,7 @@ fn lexer_test_regex_ambiguity() {
             Token::Integer(1),
             Token::SlashAssign,
             Token::Number(1.),
-            Token::Identifier(Identifier { namespace: None, literal: "a" }),
+            Token::Identifier(Identifier { literal: "a" }),
             Token::SlashAssign,
             Token::Integer(1)
         ]
@@ -394,7 +394,7 @@ fn lexer_test_slash_assign() {
     assert_eq!(
         &lex(b"a/=1", &arena, false, false),
         &[
-            Token::Identifier(Identifier { namespace: None, literal: "a" }),
+            Token::Identifier(Identifier { literal: "a" }),
             Token::SlashAssign,
             Token::Integer(1),
         ]
@@ -482,8 +482,10 @@ fn lexer_test_indirect_call() {
     assert_eq!(
         &lex(b"@foo @ns::bar", &arena, false, false),
         &[
-            Token::IndirectCall(Identifier { namespace: None, literal: "foo" }),
-            Token::IndirectCall(Identifier { namespace: Some("ns"), literal: "bar" }),
+            Token::IndirectCall(Identifier { literal: "foo" }),
+            Token::IndirectCall(Identifier { literal: "ns" }),
+            Token::PathSpec,
+            Token::Identifier(Identifier { literal: "bar" })
         ]
     );
 }
@@ -532,7 +534,7 @@ fn lexer_test_regex_literals() {
     assert_eq!(
         &lex(b"x~/dot+/", &arena, false, false),
         &[
-            Token::Identifier(Identifier { namespace: None, literal: "x" }),
+            Token::Identifier(Identifier { literal: "x" }),
             Token::Matching,
             Token::Regex(b"dot+".into()),
         ]
@@ -548,7 +550,7 @@ fn lexer_test_switch_snippet() {
         &[
             Token::Switch,
             Token::OpenParent,
-            Token::Identifier(Identifier { namespace: None, literal: "x" }),
+            Token::Identifier(Identifier { literal: "x" }),
             Token::ClosedParent,
             Token::OpenBrace,
             Token::Case,
@@ -573,7 +575,7 @@ fn lexer_test_getline_redirection() {
         &[
             Token::Getline,
             Token::Getline,
-            Token::Identifier(Identifier { namespace: None, literal: "x" }),
+            Token::Identifier(Identifier { literal: "x" }),
             Token::LesserThan,
             Token::String(b"f".into()),
             Token::String(b"cmd".into()),
@@ -623,10 +625,7 @@ fn lexer_test_func_keyword_posix() {
     let arena = Bump::new();
     assert_eq!(
         &lex(b"func", &arena, true, false),
-        &[Token::Identifier(Identifier {
-            namespace: None,
-            literal: "func"
-        })]
+        &[Token::Identifier(Identifier { literal: "func" })]
     );
 }
 

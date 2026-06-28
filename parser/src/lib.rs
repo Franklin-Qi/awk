@@ -3,8 +3,6 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-#![forbid(unsafe_code)]
-
 mod ast;
 mod diagnostics;
 mod idempotency;
@@ -253,7 +251,11 @@ impl<'a> Parser<'a> {
         let statement = if let Some(statement) = self.parse_simple_statement(lex) {
             Statement::Simple(statement?)
         } else {
-            match lex.expect_next()? {
+            let next = lex.expect_next()?;
+            if lex.is_yuxtaposed() && lex.peek_is(&Token::PathSpec) {
+                return Err(ParsingError::ExpectedIdentifier(lex.span(), None));
+            }
+            match next {
                 Token::If => {
                     let condition = self.parse_parenthesized_expr(lex)?;
                     let then_body = self.parse_statement_body(lex)?;
@@ -561,7 +563,7 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {
-        let name = lex.expect_identifier()?.qualify(self.namespace);
+        let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
         let args = self.parse_signature(lex, &name)?;
         lex.consume(&Token::Newline);
         let body = self.parse_body(lex)?;
@@ -586,7 +588,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let name = lex.expect_identifier()?.qualify(self.namespace);
+            let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
             // Linear search is fine for the numbers we are working with.
             if let Some(arg) = args.iter().find(|&a| a == &name) {
                 return Err(ParsingError::DuplicatedArgument(
@@ -657,20 +659,31 @@ impl<'a> Parser<'a> {
             Token::TypedRegex(r) if typed_regex => Ok(Atom::TypedRegex(r)),
             Token::TypedRegex(_) => Err(ParsingError::UnexpectedTypedRegex(lex.span())),
             token => match self.get_place(lex, token) {
+                Ok(_) if lex.peek_is(&Token::PathSpec) => {
+                    // SAFETY: tokens matching get_place() are UTF-8.
+                    lexer::Identifier { literal: unsafe { lex.src_as_str() } }
+                        .qualify(lex, self.namespace)
+                        .map(Variable::User)
+                        .map(Atom::Variable)
+                }
                 Ok(var) => Ok(Atom::Variable(var)),
-                Err(_) => Err(ParsingError::UnexpectedToken(
-                    lex.span(),
-                    "is not valid data.".into(),
-                )),
+                Err((e, _)) => Err(e),
             },
         }
     }
 
     #[tracing::instrument]
-    fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Result<Variable<'a>, Token<'a>> {
+    fn get_place(
+        &self,
+        lex: &mut Lexer<'a>,
+        token: Token<'a>,
+    ) -> Result<Variable<'a>, (ParsingError, Token<'a>)> {
         match token {
             Token::Identifier(a) if !(lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed()) => {
-                Ok(a.qualify(self.namespace).into())
+                match a.qualify(lex, self.namespace) {
+                    Ok(ident) => Ok(ident.into()),
+                    Err(e) => Err((e, token)),
+                }
             }
             Token::NrVariable => Ok(Variable::Nr),
             Token::NfVariable => Ok(Variable::Nf),
@@ -687,7 +700,10 @@ impl<'a> Parser<'a> {
             Token::RstartVariable => Ok(Variable::Rstart),
             Token::RlengthVariable => Ok(Variable::Rlength),
             Token::EnvironVariable => Ok(Variable::Environ),
-            tok => Err(tok),
+            token => Err((
+                ParsingError::UnexpectedToken(lex.span(), "is not valid data".to_string()),
+                token,
+            )),
         }
     }
 }
@@ -717,21 +733,43 @@ impl Preprocessor {
 }
 
 trait IdentifierExt<'a> {
-    fn qualify(self, namespace: &'a str) -> Identifier<'a>
+    fn qualify(self, lex: &mut Lexer<'a>, namespace: &'a str) -> Result<Identifier<'a>>
     where
         Self: 'a;
 }
 
 impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
-    fn qualify(self, namespace: &'a str) -> Identifier<'a>
+    fn qualify(self, lex: &mut Lexer<'a>, mut namespace: &'a str) -> Result<Identifier<'a>>
     where
         Self: 'a,
     {
-        let literal = self.literal;
-        if let Some(namespace) = self.namespace {
-            Identifier { namespace, literal }
+        let no_space = lex.is_yuxtaposed();
+        let span = lex.span();
+
+        if !lex.consume(&Token::PathSpec) {
+            // No explicit namespace; use current namespace or global's.
+            if self.literal.bytes().all(|c| c.is_ascii_uppercase()) {
+                namespace = "awk";
+            }
+            Ok(Identifier { namespace, literal: self.literal })
+        } else if !no_space {
+            // Space between namespace and path specifier.
+            let space_span = Some(Left(span.end..lex.span().start));
+            lex.consume_with(Token::is_ident_place);
+            let ident_span = span.start..lex.span().end;
+            Err(ParsingError::ExpectedIdentifier(ident_span, space_span))
+        } else if lex.peek_with(Token::is_ident_place) && lex.is_yuxtaposed() {
+            lex.next();
+            // SAFETY: the token is ensured to be UTF-8.
+            let literal = unsafe { lex.src_as_str() };
+            Ok(Identifier { namespace: self.literal, literal })
         } else {
-            Identifier { namespace, literal }
+            // Try to select space between the path specifier and next one.
+            let space_span = (lex.peek().is_none() || !lex.is_yuxtaposed())
+                .then(|| lex.span().end..lex.peeked_span().map_or(lex.span().end, |s| s.start))
+                .map(Right);
+            let err_span = span.start..lex.peeked_span().unwrap_or(lex.span()).end;
+            Err(ParsingError::ExpectedIdentifier(err_span, space_span))
         }
     }
 }

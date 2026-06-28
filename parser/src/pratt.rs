@@ -325,37 +325,21 @@ impl<'a, 'b> Pratt<'a, 'b> {
         // Only accepts calls if the function name is next to the parenthesis.
         // If there is a space, we interpret it as a concatenation and let the
         // interpreter error if necessary; elsewhere we can't concat with vars.
-        if let Token::Identifier(name) = next
-            && lex.peek_is(&Token::OpenParent)
-            && lex.is_yuxtaposed()
-        {
-            if name.namespace.is_none_or(|n| n == "awk") && is_special_var(name.literal) {
-                return Err(ParsingError::SpecialVariableCall(
-                    subexpr_span(anchor, lex.span().end),
-                    name.literal.to_string(),
-                ));
+        if let Token::Identifier(name) = next {
+            let name = name.qualify(lex, self.parser.namespace)?;
+            if lex.peek_is(&Token::OpenParent) {
+                self.parser.parse_function_call(
+                    lex,
+                    |args| ExprNode::FunctionCall(name, args),
+                    lex.span(),
+                )
+            } else {
+                Ok(Expr::Leaf(Atom::Variable(Variable::User(name))))
             }
-            self.parser.parse_function_call(
-                lex,
-                |args| ExprNode::FunctionCall(name.qualify(self.parser.namespace), args),
-                subexpr_span(anchor, lex.span().end),
-            )
-        } else if let Some(builtin) = next.maps_to_builtin() {
-            self.parser.parse_function_call(
-                lex,
-                |args| ExprNode::BuiltinCall(builtin, args),
-                lex.span(),
-            )
         } else if let Token::IndirectCall(name) = next {
-            // Possible gawk bug: it accepts special variables if qualified,
+            // BUG(gawk): it accepts special variables iff qualified,
             // even if it is with the `awk` namespace.
-            if name.namespace.is_none() && is_special_var(name.literal) {
-                return Err(ParsingError::SpecialVariableIndirectCall(
-                    subexpr_span(anchor, lex.span().end),
-                    name.literal.to_string(),
-                ));
-            }
-            let name = Variable::User(name.qualify(self.parser.namespace));
+            let name = Variable::User(name.qualify(lex, self.parser.namespace)?);
             self.parser.parse_function_call(
                 lex,
                 |args| ExprNode::IndirectCall(name, args),
@@ -364,7 +348,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
         } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed() {
             let name = match self.parser.get_place(lex, next) {
                 Ok(var) => var.to_string(),
-                Err(tok) => format!("{tok:?}"),
+                Err((_, tok)) => format!("{tok:?}"),
             };
             Err(ParsingError::SpecialVariableCall(
                 subexpr_span(anchor, lex.span().end),
@@ -590,25 +574,4 @@ impl NonAssociativity for BinaryOperator {
             Self::Eq | Self::NEq | Self::Gt | Self::Lt | Self::LtE | Self::GtE,
         )
     }
-}
-
-fn is_special_var(name: &str) -> bool {
-    matches!(
-        name,
-        "NR" | "NF"
-            | "FS"
-            | "RS"
-            | "OFS"
-            | "ORS"
-            | "FILENAME"
-            | "ARGC"
-            | "ARGV"
-            | "SUBSEP"
-            | "FNR"
-            | "ARGIND"
-            | "OFMT"
-            | "RSTART"
-            | "RLENGTH"
-            | "ENVIRON"
-    )
 }
