@@ -340,6 +340,12 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 |args| ExprNode::FunctionCall(name.qualify(self.parser.namespace), args),
                 subexpr_span(anchor, lex.span().end),
             )
+        } else if let Some(builtin) = next.maps_to_builtin() {
+            self.parser.parse_function_call(
+                lex,
+                |args| ExprNode::BuiltinCall(builtin, args),
+                lex.span(),
+            )
         } else if let Token::IndirectCall(name) = next {
             // Possible gawk bug: it accepts special variables if qualified,
             // even if it is with the `awk` namespace.

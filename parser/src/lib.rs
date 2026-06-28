@@ -235,6 +235,10 @@ impl<'a> Parser<'a> {
                     lex.next();
                     Some(self.parse_command(lex, name))
                 }
+                token if let Some(builtin) = token.maps_to_builtin() => {
+                    lex.next();
+                    Some(self.parse_builtin_call(lex, builtin))
+                }
                 Token::Delete => {
                     lex.next();
                     Some(self.parse_delete(lex))
@@ -481,6 +485,17 @@ impl<'a> Parser<'a> {
         Ok(SimpleStatement::Command { name, args, redirection })
     }
 
+    #[tracing::instrument]
+    fn parse_builtin_call(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        builtin: BuiltinFunction,
+    ) -> Result<SimpleStatement<'a>> {
+        let expr =
+            self.parse_function_call(lex, |args| ExprNode::BuiltinCall(builtin, args), lex.span())?;
+        Ok(SimpleStatement::Expression(expr))
+    }
+
     /// Parses arguments to command or function calls; consumes to the end of
     /// the argument list or short-circuits with `delimiter` if empty.
     fn parse_function_args(&mut self, lex: &mut Lexer<'a>) -> Result<Vec<'a, Expr<'a>>> {
@@ -636,7 +651,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Atom<'a>> {
         match token {
             Token::Number(n) => Ok(Atom::Number(n)),
-            Token::SmallInt(n) => Ok(Atom::SmallInt(n)),
+            Token::Integer(n) => Ok(Atom::Integer(n)),
             Token::String(s) => Ok(Atom::String(s)),
             Token::Regex(r) => Ok(Atom::Regex(r)),
             Token::TypedRegex(r) if typed_regex => Ok(Atom::TypedRegex(r)),
