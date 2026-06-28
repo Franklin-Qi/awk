@@ -75,12 +75,6 @@ pub enum ParsingError {
     SpecialVariableIndirectCall(Span, String),
     #[error("Can't chain non-associative operators.")]
     NonAssociativeOperator(Span),
-    #[error("Using reserved identifier `{1}` as a namespace is not allowed.")]
-    ReservedNamespace(Span, String),
-    #[error(
-        "Using reserved identifier `{1}` as second component of a qualified name is not allowed."
-    )]
-    ReservedQualifiedLiteral(Span, String),
 }
 
 impl ParsingError {
@@ -127,8 +121,6 @@ impl ParsingError {
             Self::SpecialVariableCall(span, _) => Some(span.clone()),
             Self::SpecialVariableIndirectCall(span, _) => Some(span.clone()),
             Self::NonAssociativeOperator(span) => Some(span.clone()),
-            Self::ReservedNamespace(span, _) => Some(span.clone()),
-            Self::ReservedQualifiedLiteral(span, _) => Some(span.clone()),
         }
     }
     fn hint(&self) -> Option<&'static str> {

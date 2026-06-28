@@ -8,7 +8,6 @@
 mod ast;
 mod diagnostics;
 mod idempotency;
-mod keywords;
 mod lex;
 mod pratt;
 mod sexpr;
@@ -135,14 +134,7 @@ impl<'a> Parser<'a> {
                     }
                     Token::NamespaceDirective => {
                         let namespace = lex.expect_string()?;
-                        let namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
-                        if keywords::is_reserved_keyword(namespace) {
-                            return Err(ParsingError::ReservedNamespace(
-                                lex.span(),
-                                namespace.to_string(),
-                            ));
-                        }
-                        self.namespace = namespace;
+                        self.namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
                         lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
                     }
                     Token::ConcurrentDirective => {
@@ -552,13 +544,8 @@ impl<'a> Parser<'a> {
 
     fn parse_delete(&mut self, lex: &mut Lexer<'a>) -> Result<SimpleStatement<'a>> {
         let next = lex.expect_next()?;
-        let var = match self.get_place(lex, next) {
-            Ok(var) => var,
-            Err(
-                err @ (ParsingError::ReservedNamespace(..)
-                | ParsingError::ReservedQualifiedLiteral(..)),
-            ) => return Err(err),
-            Err(_) => return Err(ParsingError::OperatorExpectsVariable(lex.span())),
+        let Ok(var) = self.get_place(lex, next) else {
+            return Err(ParsingError::OperatorExpectsVariable(lex.span()));
         };
         let index = if lex.consume(&Token::OpenBracket) {
             let mut pratt = Pratt::new(self, false);
@@ -574,9 +561,7 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_function(&mut self, lex: &mut Lexer<'a>) -> Result<()> {
-        let name = lex
-            .expect_identifier()?
-            .try_qualify(self.namespace, &lex.span())?;
+        let name = lex.expect_identifier()?.qualify(self.namespace);
         let args = self.parse_signature(lex, &name)?;
         lex.consume(&Token::Newline);
         let body = self.parse_body(lex)?;
@@ -601,9 +586,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let name = lex
-                .expect_identifier()?
-                .try_qualify(self.namespace, &lex.span())?;
+            let name = lex.expect_identifier()?.qualify(self.namespace);
             // Linear search is fine for the numbers we are working with.
             if let Some(arg) = args.iter().find(|&a| a == &name) {
                 return Err(ParsingError::DuplicatedArgument(
@@ -675,10 +658,6 @@ impl<'a> Parser<'a> {
             Token::TypedRegex(_) => Err(ParsingError::UnexpectedTypedRegex(lex.span())),
             token => match self.get_place(lex, token) {
                 Ok(var) => Ok(Atom::Variable(var)),
-                Err(
-                    err @ (ParsingError::ReservedNamespace(..)
-                    | ParsingError::ReservedQualifiedLiteral(..)),
-                ) => Err(err),
                 Err(_) => Err(ParsingError::UnexpectedToken(
                     lex.span(),
                     "is not valid data.".into(),
@@ -688,10 +667,10 @@ impl<'a> Parser<'a> {
     }
 
     #[tracing::instrument]
-    fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Result<Variable<'a>> {
+    fn get_place(&self, lex: &mut Lexer<'a>, token: Token<'a>) -> Result<Variable<'a>, Token<'a>> {
         match token {
             Token::Identifier(a) if !(lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed()) => {
-                Ok(a.try_qualify(self.namespace, &lex.span())?.into())
+                Ok(a.qualify(self.namespace).into())
             }
             Token::NrVariable => Ok(Variable::Nr),
             Token::NfVariable => Ok(Variable::Nf),
@@ -708,10 +687,7 @@ impl<'a> Parser<'a> {
             Token::RstartVariable => Ok(Variable::Rstart),
             Token::RlengthVariable => Ok(Variable::Rlength),
             Token::EnvironVariable => Ok(Variable::Environ),
-            tok => Err(ParsingError::UnexpectedToken(
-                lex.span(),
-                format!("{tok:?}"),
-            )),
+            tok => Err(tok),
         }
     }
 }
@@ -741,35 +717,22 @@ impl Preprocessor {
 }
 
 trait IdentifierExt<'a> {
-    fn try_qualify(self, namespace: &'a str, span: &Span) -> Result<Identifier<'a>>
+    fn qualify(self, namespace: &'a str) -> Identifier<'a>
     where
         Self: 'a;
 }
 
 impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
-    fn try_qualify(self, namespace: &'a str, span: &Span) -> Result<Identifier<'a>>
+    fn qualify(self, namespace: &'a str) -> Identifier<'a>
     where
         Self: 'a,
     {
         let literal = self.literal;
-        let namespace = if let Some(ns) = self.namespace {
-            if keywords::is_reserved_keyword(ns) {
-                return Err(ParsingError::ReservedNamespace(
-                    span.clone(),
-                    ns.to_string(),
-                ));
-            }
-            if keywords::is_reserved_keyword(literal) {
-                return Err(ParsingError::ReservedQualifiedLiteral(
-                    span.clone(),
-                    literal.to_string(),
-                ));
-            }
-            ns
+        if let Some(namespace) = self.namespace {
+            Identifier { namespace, literal }
         } else {
-            namespace
-        };
-        Ok(Identifier { namespace, literal })
+            Identifier { namespace, literal }
+        }
     }
 }
 
