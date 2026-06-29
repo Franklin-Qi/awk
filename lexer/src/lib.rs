@@ -31,14 +31,15 @@ pub type Result<T, E = LexingError> = std::result::Result<T, E>;
 #[logos(subpattern identifier = r"[a-zA-Z_][a-zA-Z0-9_]*")]
 #[logos(subpattern ignore = r"(?:[ \t]|(\\\n))+")]
 #[logos(subpattern ignore_with_nl = r"(?:(?&ignore)|\n)*")]
+#[logos(subpattern order = r"([eE][+-]?\d+)")]
 #[logos(error(LexingError, callback = |lex| LexingError::unexpected(lex)))]
 pub enum Token<'a> {
-    #[regex(r"(-)?\d+", parse_num, priority = 9)]
+    #[regex(r"\d+", parse_num, priority = 9)]
     Numeric,
     // Not emitted by Logos directly.
     Integer(i32),
-    #[regex(r"(-)?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?", parse_float, priority = 8)]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", parse_float)]
+    #[regex(r"\d+(\.\d*)?(?&order)?", parse_float, priority = 8)]
+    #[regex(r"\.\d+(?&order)?", parse_float)]
     Number(f64),
     #[token("\"", parse_string)]
     String(Slice<'a>),
