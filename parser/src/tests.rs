@@ -5,8 +5,7 @@
 
 use bumpalo::Bump;
 
-use crate::diagnostics::ParsingError;
-use crate::{Ast, Lexer, Parser};
+use crate::{Ast, Lexer, Parser, diagnostics::ParsingError};
 
 fn parse<'a>(source: &'a str, arena: &'a Bump) -> super::Result<&'a Ast<'a>> {
     let parser = arena.alloc(Parser::new(arena));
@@ -22,7 +21,7 @@ fn parse_error_span(source: &str) -> std::ops::Range<usize> {
     }
 }
 
-fn spanned_snippet<'a>(source: &'a str, span: std::ops::Range<usize>) -> &'a str {
+fn spanned_snippet(source: &str, span: std::ops::Range<usize>) -> &str {
     std::str::from_utf8(&source.as_bytes()[span]).expect("span out of bounds")
 }
 
@@ -258,6 +257,11 @@ fn test_parser_multiplicative_precedence() {
 fn test_parser_relaxed_assignments() {
     let source = "
         { 1 + 0 && x = 1 }
+        { 1 + 0 || x = 1 }
+        { 1 + 0 >= x = 1 }
+        { 1 + 0 < x = 1 }
+        { 1 + 0 ~ x = 1 }
+        { 1 + 0 !~ x = 1 }
         { y = @/a/ ? b : c }
         { 1 + 0 || z = @/a/ ? b : c }
         { 1 + 0 || z = /a/ && b || c }
@@ -266,6 +270,11 @@ fn test_parser_relaxed_assignments() {
         source => {
             rules: [
                 (None, Some("(body (And (Add 1 0) (Assignment awk::x 1)))")),
+                (None, Some("(body (Or (Add 1 0) (Assignment awk::x 1)))")),
+                (None, Some("(body (GtE (Add 1 0) (Assignment awk::x 1)))")),
+                (None, Some("(body (Lt (Add 1 0) (Assignment awk::x 1)))")),
+                (None, Some("(body (Matches (Add 1 0) (Assignment awk::x 1)))")),
+                (None, Some("(body (MatchesNot (Add 1 0) (Assignment awk::x 1)))")),
                 (None, Some("(body (?: (Assignment awk::y @/a/) awk::b awk::c))")),
                 (None, Some("(body (?: (Or (Add 1 0) (Assignment awk::z @/a/)) awk::b awk::c))")),
                 (
@@ -275,6 +284,7 @@ fn test_parser_relaxed_assignments() {
             ],
         }
     );
+    test_parser!(is_err!("{ 1 + x = 1 }", "{ x y = 1 }", "{ 1 + 2 * x = 1 }"));
 }
 
 #[test]
