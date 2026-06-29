@@ -119,9 +119,12 @@ impl<'a, 'b> Pratt<'a, 'b> {
                     ),
                 }
             } else if let Ok(op) = BinaryPlaceOperator::parse(next, &span) {
-                // Places consume assignment operators with maximum precedence;
-                // effectively ignoring the enclosing operator's precedence.
+                // Places consume assignment operators with maximum precedence
+                // on exprs with certain operators, overriding their precedence.
                 // For example, `1 && x = 1` parses as `1 && (x = 1)`.
+                if min_bp >= BinaryOperator::Concat.binding_power().0 {
+                    break;
+                }
                 let place = match Place::lower_from(lhs.take(), subexpr_span(expr_anchor, span.end))
                 {
                     Ok(x) => x,
