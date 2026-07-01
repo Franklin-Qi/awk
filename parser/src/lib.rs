@@ -190,27 +190,42 @@ impl<'a> Parser<'a> {
         lex.expect(&Token::OpenBrace, ParsingError::ExpectedOpeningBrace)?;
         let mut body = Vec::new_in(self.arena);
         let mut depth = 0;
+        let mut after_separator = true;
 
         loop {
-            if lex.peek_with(|tok| tok.is_stmnt_end() || tok.is_brace()) {
-                match lex.expect_next()? {
-                    Token::ClosedBrace => {
-                        if depth == 0 {
-                            break Ok(Body(body));
-                        }
-                        depth -= 1;
-                    }
-                    Token::OpenBrace => {
-                        depth += 1;
-                    }
-                    _ => {}
+            let stmnt_end = lex.consume_with(Token::is_stmnt_end);
+            if stmnt_end {
+                after_separator = true;
+            }
+
+            match lex.peek() {
+                Some(Ok(Token::ClosedBrace)) if depth == 0 && !stmnt_end => {
+                    lex.next();
+                    break Ok(Body(body));
                 }
-            } else if lex.peek().is_some() {
-                body.push(self.parse_statement(lex)?);
-            } else {
-                break Err(ParsingError::UnclosedScope(
-                    lex.peeked_span().unwrap_or_else(|_| lex.span()),
-                ));
+                Some(Ok(Token::ClosedBrace)) => {
+                    depth -= 1;
+                    lex.next();
+                    after_separator = true;
+                }
+                Some(Ok(Token::OpenBrace)) if after_separator || depth > 0 => {
+                    depth += 1;
+                    lex.next();
+                    after_separator = false;
+                }
+                Some(Ok(Token::OpenBrace)) => {
+                    break Err(ParsingError::ExpectedStatementEnd(lex.span()));
+                }
+                Some(_) => {
+                    let (statement, consumed) = self.parse_statement_with_trailing(lex)?;
+                    body.push(statement);
+                    after_separator = consumed;
+                }
+                None => {
+                    break Err(ParsingError::UnclosedScope(
+                        lex.peeked_span().unwrap_or_else(|_| lex.span()),
+                    ));
+                }
             }
         }
     }
@@ -248,6 +263,15 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_statement(&mut self, lex: &mut Lexer<'a>) -> Result<Statement<'a>> {
+        self.parse_statement_with_trailing(lex)
+            .map(|(statement, _)| statement)
+    }
+
+    #[tracing::instrument]
+    fn parse_statement_with_trailing(
+        &mut self,
+        lex: &mut Lexer<'a>,
+    ) -> Result<(Statement<'a>, bool)> {
         let statement = if let Some(statement) = self.parse_simple_statement(lex) {
             Statement::Simple(statement?)
         } else {
@@ -372,8 +396,8 @@ impl<'a> Parser<'a> {
             }
         };
 
-        lex.consume_with(Token::is_stmnt_end);
-        Ok(statement)
+        let consumed = lex.consume_with(Token::is_stmnt_end);
+        Ok((statement, consumed))
     }
 
     #[tracing::instrument]
