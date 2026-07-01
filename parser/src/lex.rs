@@ -212,7 +212,6 @@ pub trait TokenExt {
     fn maps_to_special_pat(&self) -> Option<SpecialPattern>;
     fn is_stmnt_end(&self) -> bool;
     fn is_stmnt_or_block_end(&self) -> bool;
-    fn is_brace(&self) -> bool;
 }
 
 impl TokenExt for Token<'_> {
@@ -333,9 +332,6 @@ impl TokenExt for Token<'_> {
     }
     fn is_stmnt_or_block_end(&self) -> bool {
         self.is_stmnt_end() || self == &Token::ClosedBrace
-    }
-    fn is_brace(&self) -> bool {
-        matches!(self, Token::OpenBrace | Token::ClosedBrace)
     }
 }
 
