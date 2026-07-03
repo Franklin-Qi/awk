@@ -197,14 +197,19 @@ fn test_parser_invalid_patterns() {
 
 #[test]
 fn test_parser_statement_end_after_command() {
+    test_parser!("{ print 1; { print 2 } } {;} { print; } { { print }; }" => {
+        rules: [
+            (None, Some("(body (Print 1) (Print 2))")),
+            (None, Some("(body)")),
+            (None, Some("(body (Print))")),
+            (None, Some("(body (Print))"))
+        ],
+    });
     test_parser!(is_err!(
         "{ print 1 { 1 + 1 } }",
         "{ print 1 { } }",
         "{ printf \"%d\" 1 { } }"
     ));
-    test_parser!("{ print 1; { print 2 } }" => {
-        rules: [(None, Some("(body (Print 1) (Print 2))"))],
-    });
 }
 
 #[test]
