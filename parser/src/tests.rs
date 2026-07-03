@@ -213,6 +213,41 @@ fn test_parser_statement_end_after_command() {
 }
 
 #[test]
+fn test_parser_statement_bodies() {
+    let source = "
+        { if (1); }
+        { if (1); else; }
+        { if (1) print; }
+        { if (1) print; else; }
+        { if (1); else print; }
+        { for (;;); }
+        { while (1); }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (if 1 (body)))")),
+            (None, Some("(body (if 1 (body) (else (body))))")),
+            (None, Some("(body (if 1 (body (Print))))")),
+            (None, Some("(body (if 1 (body (Print)) (else (body))))")),
+            (None, Some("(body (if 1 (body) (else (body (Print)))))")),
+            (None, Some("(body (for (pass) (pass) (pass) (body)))")),
+            (None, Some("(body (while 1 (body)))")),
+        ],
+    });
+    test_parser!(is_err!(
+        "{ if (1) }",
+        "{ if (1); else }",
+        "{ if (1) }",
+        "{ if (1) 1 + 1 else }",
+        "{ if (1) print 1 else }",
+        "{ if (1) 1 + 1; else }",
+        "{ if (1) print 1; else }",
+        "{ while (1) }",
+        "{ for (;;) }"
+    ));
+}
+
+#[test]
 fn test_parser_reserved_qualified_identifiers() {
     test_parser!(is_err!(
         "{ if::while }",
