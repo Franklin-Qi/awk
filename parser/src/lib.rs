@@ -191,15 +191,13 @@ impl<'a> Parser<'a> {
         let mut body = Vec::new_in(self.arena);
         let mut depth = 0;
         let mut after_separator = true;
+        let start_span = lex.span().start;
 
         loop {
-            let stmnt_end = lex.consume_with(Token::is_stmnt_end);
-            if stmnt_end {
-                after_separator = true;
-            }
+            after_separator |= lex.consume_with(Token::is_stmnt_end);
 
             match lex.peek() {
-                Some(Ok(Token::ClosedBrace)) if depth == 0 && !stmnt_end => {
+                Some(Ok(Token::ClosedBrace)) if depth == 0 => {
                     lex.next();
                     break Ok(Body(body));
                 }
@@ -214,6 +212,7 @@ impl<'a> Parser<'a> {
                     after_separator = false;
                 }
                 Some(Ok(Token::OpenBrace)) => {
+                    lex.next();
                     break Err(ParsingError::ExpectedStatementEnd(lex.span()));
                 }
                 Some(_) => {
@@ -222,9 +221,7 @@ impl<'a> Parser<'a> {
                     after_separator = consumed;
                 }
                 None => {
-                    break Err(ParsingError::UnclosedScope(
-                        lex.peeked_span().unwrap_or_else(|_| lex.span()),
-                    ));
+                    break Err(ParsingError::UnclosedScope(start_span..lex.span().end));
                 }
             }
         }
