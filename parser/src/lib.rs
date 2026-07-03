@@ -466,10 +466,24 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_statement_body(&mut self, lex: &mut Lexer<'a>) -> Result<Body<'a>> {
+        // Braced body, with >=1 statements.
         if lex.peek_is(&Token::OpenBrace) {
-            self.parse_body(lex)
+            return self.parse_body(lex);
+        }
+
+        // Empty body check. Accepts cases like `if (...);`.
+        if lex.consume(&Token::Semicolon) {
+            return Ok(Vec::new_in(self.arena).into());
+        }
+
+        // Parses a single statement.
+        let start = lex.peeked_span().map_or(lex.span().start, |s| s.start);
+        let (statement, terminator) = self.parse_statement_with_trailing(lex)?;
+
+        if terminator || lex.peek_is(&Token::ClosedBrace) {
+            Ok(vec![in self.arena; statement].into())
         } else {
-            Ok(vec![in self.arena; self.parse_statement(lex)?].into())
+            Err(ParsingError::ExpectedStatementEnd(start..lex.span().end))
         }
     }
 
