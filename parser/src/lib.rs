@@ -18,7 +18,7 @@ use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
 use either::Either::{Left, Right};
 use hashbrown::HashMap;
-use lexer::{LexingError, Span, Token};
+use lexer::{Span, Token};
 
 pub use crate::{ast::*, lex::Lexer};
 use crate::{
@@ -36,12 +36,6 @@ pub struct Parser<'a> {
     current_file: &'a str,
     namespace: &'a str,
     concurrent: bool,
-}
-
-impl From<LexingError> for ParsingError {
-    fn from(value: LexingError) -> Self {
-        Self::LexingError(value)
-    }
 }
 
 type AriadneErr<'a> = (

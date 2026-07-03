@@ -10,8 +10,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum ParsingError {
-    #[error("{}", .0)]
-    LexingError(LexingError),
+    #[error(transparent)]
+    LexingError(#[from] LexingError),
     #[error("Unclosed scope.")]
     UnclosedScope(Span),
     #[error("Unexpected token: {}", .1)]
