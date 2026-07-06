@@ -346,6 +346,7 @@ fn test_parser_inc_dec() {
         { --a[2] ++$(1 + 1) }
         { a++ a["x"]-- }
         { --a $"a"++ }
+        { --a/a++ a++/--a }
     "#;
     test_parser!(source => {
         rules: [
@@ -358,6 +359,8 @@ fn test_parser_inc_dec() {
             ),
             (None, Some("(body (Concat (IncrementR awk::a) (DecrementR (Index awk::a \"x\"))))")),
             (None, Some("(body (Concat (DecrementL awk::a) (IncrementR (Record \"a\"))))")),
+            (None, Some("(body (Concat (Divide (DecrementL awk::a) (IncrementR awk::a)) \
+                                       (Divide (IncrementR awk::a) (DecrementL awk::a))))"))
         ],
     });
     // these should parse as (Cat (--L (++R $0)) a), or otherwise error out.
