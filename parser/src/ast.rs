@@ -299,8 +299,9 @@ pub enum BuiltinFunction {
     Rshift,
 }
 
-#[derive(Debug, Clone, Copy, Display)]
 #[repr(u8)]
+#[derive(Debug, Clone, Copy, Display)]
+#[display(rename_all = "lowercase")]
 pub enum Command {
     Print,
     Printf,
