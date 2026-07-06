@@ -236,9 +236,9 @@ pub enum Token<'a> {
     #[token("^", accept_expression)]
     #[token("**", parse_non_posix_operator)]
     Circumflex,
-    #[token("++", accept_expression)]
+    #[token("++", accept_operator)]
     Increment,
-    #[token("--", accept_expression)]
+    #[token("--", accept_operator)]
     Decrement,
     #[token("=", accept_expression)]
     Assignment,

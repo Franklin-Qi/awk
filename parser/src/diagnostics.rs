@@ -64,7 +64,7 @@ pub enum ParsingError {
     ExpectedIdentifier(Span, Option<Either<Span, Span>>),
     #[error("Expected an unary operation.")]
     ExpectedUnaryOperator(Span),
-    #[error("Expected a binary operation")]
+    #[error("Expected a binary operation.")]
     ExpectedBinaryOperator(Span),
     #[error("Expected a placing operation.")]
     ExpectedPlaceOperator(Span),
