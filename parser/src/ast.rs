@@ -7,6 +7,7 @@ use std::fmt::Debug;
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec};
+use derive_more::Display;
 use either::Either;
 use hashbrown::HashMap;
 use lexer::{Slice, Span, Token};
@@ -254,8 +255,9 @@ pub struct Function<'a> {
     pub body: Body<'a>,
 }
 
-#[derive(Debug, Clone, Copy)]
 #[repr(u8)]
+#[derive(Debug, Clone, Copy, Display)]
+#[display(rename_all = "lowercase")]
 pub enum BuiltinFunction {
     Length,
     Substr,
@@ -297,7 +299,7 @@ pub enum BuiltinFunction {
     Rshift,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Display)]
 #[repr(u8)]
 pub enum Command {
     Print,

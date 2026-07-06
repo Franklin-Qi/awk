@@ -31,6 +31,7 @@ bumpalo = { version = "3.20.2", features = ["boxed", "collections", "std", "allo
 hashbrown = "0.17.0"
 allocator-api2 = "0.4.0"
 ahash = "0.8.12"
+derive_more = { version = "2.1.1", features = ["from", "debug", "display"] }
 
 [dependencies]
 interpreter.workspace = true

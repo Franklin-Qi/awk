@@ -12,10 +12,11 @@ mod sexpr;
 #[cfg(test)]
 mod tests;
 
-use std::{fmt::Debug, mem::replace};
+use std::mem::replace;
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
+use derive_more::Debug;
 use either::Either::{Left, Right};
 use hashbrown::HashMap;
 use lexer::{Span, Token};
@@ -29,10 +30,14 @@ use crate::{
 
 type Result<T, E = ParsingError> = std::result::Result<T, E>;
 
+#[derive(Debug)]
 pub struct Parser<'a> {
     ast: Ast<'a>,
+    #[debug(ignore)]
     arena: &'a Bump,
+    #[debug(ignore)]
     preprocessor: Preprocessor,
+    #[debug(ignore)]
     current_file: &'a str,
     namespace: &'a str,
     concurrent: bool,
@@ -808,25 +813,5 @@ impl<'a> IdentifierExt<'a> for lexer::Identifier<'_> {
             let err_span = span.start..lex.peeked_span().unwrap_or(lex.span()).end;
             Err(ParsingError::ExpectedIdentifier(err_span, space_span))
         }
-    }
-}
-
-impl Debug for Parser<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[derive(Debug)]
-        #[allow(dead_code)]
-        struct Parser<'a> {
-            ast: &'a Ast<'a>,
-            preprocessor: &'a Preprocessor,
-            namespace: &'a str,
-            concurrent: bool,
-        }
-        Parser {
-            ast: &self.ast,
-            preprocessor: &self.preprocessor,
-            namespace: self.namespace,
-            concurrent: self.concurrent,
-        }
-        .fmt(f)
     }
 }

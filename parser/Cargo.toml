@@ -15,6 +15,7 @@ bumpalo.workspace = true
 hashbrown.workspace = true
 allocator-api2.workspace = true
 ahash.workspace = true
+derive_more.workspace = true
 ariadne = "0.6.0"
 
 [lints]
