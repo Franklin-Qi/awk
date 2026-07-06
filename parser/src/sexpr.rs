@@ -3,7 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::fmt::{Debug, Display, Formatter, Result};
+use std::fmt::{Debug, Formatter, Result};
 
 use crate::ast::{
     Atom, Body, Expr, ExprNode, Getline, Identifier, Place, Redirection, RulePattern,
@@ -162,7 +162,7 @@ impl Debug for SimpleStatement<'_> {
             Self::Delete(array, Some(index)) => {
                 write!(f, "(delete (Index {array:?}")?;
                 for i in index {
-                    write!(f, " {i}")?;
+                    write!(f, " {i:?}")?;
                 }
                 write!(f, "))")
             }
@@ -269,12 +269,6 @@ impl<T: Debug> Debug for ListLispCasesFmt<'_, T> {
 impl Debug for Identifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{}::{}", self.namespace, self.literal)
-    }
-}
-
-impl Display for Identifier<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        <&str as Display>::fmt(&self.literal, f)
     }
 }
 

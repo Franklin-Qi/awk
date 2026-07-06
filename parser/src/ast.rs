@@ -23,6 +23,7 @@ pub struct Ast<'a> {
     pub rules: Vec<'a, Rule<'a>>,
     pub concurrent: Vec<'a, Rule<'a>>,
     pub functions: HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>,
+    pub ns_metadata: (Vec<'a, (usize, &'a str)>, usize),
 }
 
 #[derive(Debug)]

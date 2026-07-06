@@ -126,8 +126,14 @@ impl<'a> Parser<'a> {
                     }
                     Token::NamespaceDirective => {
                         let namespace = lex.expect_string()?;
-                        self.namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
+                        let namespace = lex.lex_ident(namespace.as_ref(), self.arena)?;
                         lex.expect_with(Token::is_stmnt_end, "expected statement end.".into())?;
+                        if self.namespace == namespace {
+                            continue; // skip counting.
+                        }
+                        let i = self.ast.ns_metadata.1;
+                        self.namespace = namespace;
+                        self.ast.ns_metadata.0.push((i, namespace));
                     }
                     Token::ConcurrentDirective => {
                         if lex.peek_with(|t| t.maps_to_special_pat().is_some()) || self.concurrent {
@@ -145,7 +151,7 @@ impl<'a> Parser<'a> {
                             "a pattern was expected.".into(),
                         ));
                     }
-                    Token::Newline | Token::Semicolon => {}
+                    Token::Newline | Token::Semicolon => continue, // skip counting.
                     _ => {
                         return Err(ParsingError::UnexpectedToken(
                             lex.span(),
@@ -154,6 +160,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            self.ast.ns_metadata.1 += 1;
         }
         Ok(&self.ast)
     }
@@ -609,7 +616,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Vec<'a, Identifier<'a>>> {
         let mut args = Vec::new_in(self.arena);
         lex.expect(&Token::OpenParent, |s| {
-            ParsingError::NoFunctionSignature(s, name.to_string())
+            ParsingError::NoFunctionSignature(s, format!("{name:?}"))
         })?;
 
         if lex.consume(&Token::ClosedParent) {
@@ -622,8 +629,8 @@ impl<'a> Parser<'a> {
             if let Some(arg) = args.iter().find(|&a| a == &name) {
                 return Err(ParsingError::DuplicatedArgument(
                     lex.span(),
-                    name.to_string(),
-                    arg.to_string(),
+                    format!("{name:?}"),
+                    format!("{arg:?}"),
                 ));
             }
             args.push(name);
@@ -748,6 +755,7 @@ impl<'a> Ast<'a> {
             rules: Vec::new_in(arena),
             concurrent: Vec::new_in(arena),
             functions: HashMap::with_hasher_in(RandomState::new(), arena),
+            ns_metadata: (Vec::new_in(arena), 0),
         }
     }
 }

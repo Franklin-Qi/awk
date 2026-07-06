@@ -337,7 +337,7 @@ impl Display for SymbolTable<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Symbols:")?;
         fmt_list(f, self.user.iter(), |f, i, (k, v)| {
-            write!(f, "user[{i}] @ {k} = {v}")
+            write!(f, "user[{i}] @ {k:?} = {v}")
         })
     }
 }

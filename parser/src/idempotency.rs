@@ -6,7 +6,7 @@
 use std::fmt::{Debug, Display, Formatter, Result, Write};
 
 use crate::{
-    Ast, BuiltinFunction, Function,
+    Ast, BuiltinFunction, Function, Identifier,
     ast::{
         ArrayOperator, Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Command,
         Expr, ExprNode, Getline, Place, Redirection, Rule, RulePattern, SimpleStatement, Statement,
@@ -14,50 +14,103 @@ use crate::{
     },
 };
 
-/// Bit trick to pack `{ indent: u8, bp: u8 }` inside `Formatter::width`.
-fn encode(indent: u8, prec: u8) -> usize {
-    ((indent as usize) << 8) | (prec as usize)
+// Sorry not sorry for the DSL.
+macro_rules! fmt_seq {
+    ($f:expr $(,)?) => { Ok(()) };
+    ($f:expr, v($var:ident) $(, $($rest:tt)*)?) => {{
+        fmt_seq!($f, write!($f, "{}", $var) $(, $($rest)*)?)
+    }};
+    ($f:expr, select($c:expr, ($($a:tt)*), ($($b:tt)*)) $(, $($rest:tt)*)?) => {{
+        if $c {
+            fmt_seq!($f, $($a)* $(, $($rest)*)?)
+        } else {
+            fmt_seq!($f, $($b)* $(, $($rest)*)?)
+        }
+    }};
+    ($f:expr, bt($($munch:tt)*) $(, $($rest:tt)*)?) => {{
+        fmt_seq!($f, "[", $($munch)*, "]" $(, $($rest)*)?)
+    }};
+    ($f:expr, p($($munch:tt)*) $(, $($rest:tt)*)?) => {{
+        fmt_seq!($f, "(", $($munch)*, ")" $(, $($rest)*)?)
+    }};
+    ($f:expr, b($($munch:tt)*) $(, $($rest:tt)*)?) => {{
+        fmt_seq!($f, "{{", $($munch)*, "}}" $(, $($rest)*)?)
+    }};
+    ($f:expr, opt($v:expr, |$ff:ident, $vv:ident| $cb:expr) $(, $($rest:tt)*)?) => {{
+        if let Some(x) = $v {
+            let ($ff, $vv): (&mut Formatter<'_>, _) = ($f, x);
+            fmt_seq!($f, $cb $(, $($rest)*)?)
+        } else {
+            fmt_seq!($f $(, $($rest)*)?)
+        }
+    }};
+    ($f:expr, maybe($c:expr, p($($munch:tt)*)) $(, $($rest:tt)*)?) => {{
+        if $c {
+            fmt_seq!($f, "(", $($munch)*, ")" $(, $($rest)*)?)
+        } else {
+            fmt_seq!($f, $($munch)* $(, $($rest)*)?)
+        }
+    }};
+    ($f:expr, $munch:literal $(, $($rest:tt)*)?) => {{
+        write!($f, $munch)?;
+        fmt_seq!($f $(, $($rest)*)?)
+    }};
+    ($f:expr, $munch:expr $(, $($rest:tt)*)?) => {{
+        $munch?;
+        fmt_seq!($f $(, $($rest)*)?)
+    }};
 }
 
-/// Bit trick to unpack the `{ indent: u8, bp: u8 }` inside `Formatter::width`.
-fn decode(f: &Formatter<'_>) -> (u8, u8) {
-    let w = f.width().unwrap_or(0);
-    ((w >> 8) as u8, (w & 0xFF) as u8)
+struct NamespaceState<'a> {
+    tl_ix: usize,
+    namespace: &'a str,
 }
 
 impl Display for Ast<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let mut state = NamespaceState { tl_ix: 0, namespace: "awk" };
         for load in &self.loads {
+            state.advance(f, self)?;
             writeln!(f, "@load \"{load}\"")?;
         }
         for body in &self.begin {
+            state.advance(f, self)?;
             write!(f, "BEGIN ")?;
-            write_body_ln(f, body, 0)?;
+            write_body_ln(f, body, 0, state.namespace)?;
             writeln!(f)?;
         }
         for body in &self.begin_file {
+            state.advance(f, self)?;
             write!(f, "BEGINFILE ")?;
-            write_body_ln(f, body, 0)?;
+            write_body_ln(f, body, 0, state.namespace)?;
             writeln!(f)?;
         }
         for rule in &self.rules {
-            writeln!(f, "{rule}")?;
+            state.advance(f, self)?;
+            rule.fmt(f, state.namespace)?;
         }
         for body in &self.end_file {
+            state.advance(f, self)?;
             write!(f, "ENDFILE ")?;
-            write_body_ln(f, body, 0)?;
+            write_body_ln(f, body, 0, state.namespace)?;
             writeln!(f)?;
         }
         for body in &self.end {
+            state.advance(f, self)?;
             write!(f, "END ")?;
-            write_body_ln(f, body, 0)?;
+            write_body_ln(f, body, 0, state.namespace)?;
             writeln!(f)?;
         }
         for (i, (fun, Function { args, body })) in self.functions.iter().enumerate() {
-            write!(f, "function {fun}(")?;
-            write_args(f, args, 0)?;
-            writeln!(f, ")")?;
-            write_body(f, body, 0)?;
+            state.advance(f, self)?;
+            fmt_seq!(
+                f,
+                "function ",
+                fun.fmt(f, state.namespace),
+                p(write_args(f, args, state.namespace)),
+                "\n",
+                write_body(f, body, 0, state.namespace)
+            )?;
             if i + 1 != self.functions.len() {
                 writeln!(f, "\n")?;
             }
@@ -66,80 +119,83 @@ impl Display for Ast<'_> {
     }
 }
 
-impl Display for Body<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let (indent, _) = decode(f);
-        for stmnt in &self.0 {
-            write!(f, "{stmnt:width$}", width = encode(indent, 0))?;
-            writeln!(f)?;
-        }
-        Ok(())
-    }
-}
-
-impl Display for Statement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let (indent, _) = decode(f);
-        let ew = encode(indent, 0);
-
+impl Statement<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, namespace: &str) -> Result {
         match self {
-            Self::Simple(simple) => <_ as Display>::fmt(simple, f),
+            Self::Simple(simple) => simple.fmt(f, indent, namespace),
             Self::If { condition, then_body, else_body } => {
-                write!(f, "if ({condition:ew$}) ")?;
-                write_body(f, then_body, indent)?;
-                if let Some(else_body) = else_body {
-                    write!(f, " else ")?;
-                    write_body(f, else_body, indent)?;
-                }
-                Ok(())
+                fmt_seq!(
+                    f,
+                    "if ",
+                    p(condition.fmt(f, indent, 0, namespace)),
+                    " ",
+                    write_body(f, then_body, indent, namespace),
+                    opt(else_body, |f, else_body| {
+                        fmt_seq!(f, " else ", write_body(f, else_body, indent, namespace))
+                    })
+                )
             }
             Self::While { condition, then_body } => {
-                write!(f, "while ({condition:ew$}) ")?;
-                write_body(f, then_body, indent)
+                fmt_seq!(f, "while ", p(condition.fmt(f, indent, 0, namespace)), " ")?;
+                write_body(f, then_body, indent, namespace)
             }
             Self::DoWhile { then_body, condition } => {
-                write!(f, "do ")?;
-                write_body(f, then_body, indent)?;
-                write!(f, " while ({condition:ew$})")
+                fmt_seq!(
+                    f,
+                    "do ",
+                    write_body(f, then_body, indent, namespace),
+                    " while ",
+                    p(condition.fmt(f, indent, 0, namespace))
+                )
             }
             Self::For { init, condition, update, body } => {
-                write!(f, "for (")?;
-                if let Some(e) = init {
-                    write!(f, "{e:ew$}")?;
-                }
-                write!(f, ";")?;
-                if let Some(e) = condition {
-                    write!(f, " {e:ew$}")?;
-                }
-                write!(f, ";")?;
-                if let Some(e) = update {
-                    write!(f, " {e:ew$}")?;
-                }
-                write!(f, ") ")?;
-                write_body(f, body, indent)
+                fmt_seq!(
+                    f,
+                    "for ",
+                    select(
+                        init.is_none() && condition.is_none() && update.is_none(),
+                        (p(";;")),
+                        (p(
+                            opt(init, |f, e| e.fmt(f, indent, namespace)),
+                            "; ",
+                            opt(condition, |f, e| e.fmt(f, indent, 0, namespace)),
+                            "; ",
+                            opt(update, |f, e| e.fmt(f, indent, namespace))
+                        ))
+                    ),
+                    " ",
+                    write_body(f, body, indent, namespace)
+                )
             }
             Self::ForEach { variable, array, body } => {
-                write!(f, "for ({variable} in {array}) ")?;
-                write_body(f, body, indent)
+                fmt_seq!(
+                    f,
+                    "for ",
+                    p(variable.fmt(f, namespace), " in ", array.fmt(f, namespace)),
+                    " ",
+                    write_body(f, body, indent, namespace)
+                )
             }
             Self::Switch { scrutinee, branches, default } => {
-                writeln!(f, "switch ({scrutinee:ew$}) {{")?;
+                fmt_seq!(
+                    f,
+                    "switch ",
+                    p(scrutinee.fmt(f, indent, 0, namespace)),
+                    " {{\n"
+                )?;
                 let default_pos = default.as_ref().map_or(branches.len(), |x| x.1);
+                let print_case = |f: &mut Formatter<'_>, (case, branch): &(Atom<'_>, Body<'_>)| {
+                    fmt_seq!(f, tabs(f, indent), "case ", case.fmt(f, namespace), ":\n")?;
+                    write_stmnts(f, branch, indent + 1, namespace)
+                };
                 for i in 0..default_pos {
-                    let (case, branch) = &branches[i];
-                    tabs(f, indent)?;
-                    writeln!(f, "case {case}:")?;
-                    write_stmnts(f, branch, indent + 1)?;
+                    print_case(f, &branches[i])?;
                 }
                 if let Some((body, pos)) = default {
-                    tabs(f, indent)?;
-                    writeln!(f, "default:")?;
-                    write_stmnts(f, body, indent + 1)?;
+                    fmt_seq!(f, tabs(f, indent), "default:\n")?;
+                    write_stmnts(f, body, indent + 1, namespace)?;
                     for i in *pos..branches.len() {
-                        let (case, branch) = &branches[i];
-                        tabs(f, indent)?;
-                        writeln!(f, "case {case}:")?;
-                        write_stmnts(f, branch, indent + 1)?;
+                        print_case(f, &branches[i])?;
                     }
                 }
                 tabs(f, indent)?;
@@ -147,9 +203,9 @@ impl Display for Statement<'_> {
             }
             Self::Break => write!(f, "break"),
             Self::Continue => write!(f, "continue"),
-            Self::Return(Some(expr)) => write!(f, "return {expr:ew$}"),
+            Self::Return(Some(expr)) => fmt_seq!(f, "return ", expr.fmt(f, indent, 0, namespace)),
             Self::Return(None) => write!(f, "return"),
-            Self::Exit(Some(expr)) => write!(f, "exit {expr:ew$}"),
+            Self::Exit(Some(expr)) => fmt_seq!(f, "exit ", expr.fmt(f, indent, 0, namespace)),
             Self::Exit(None) => write!(f, "exit"),
             Self::Next => write!(f, "next"),
             Self::NextFile => write!(f, "nextfile"),
@@ -157,227 +213,322 @@ impl Display for Statement<'_> {
     }
 }
 
-impl Display for SimpleStatement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let (indent, _) = decode(f);
-        let ew = encode(indent, 0);
-
+impl SimpleStatement<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, namespace: &str) -> Result {
         match self {
-            SimpleStatement::Expression(expr) => write!(f, "{expr:ew$}"),
+            SimpleStatement::Expression(expr) => expr.fmt(f, indent, 0, namespace),
             SimpleStatement::Command { name, args, redirection: Some((rx, expr)) } => {
-                write!(f, "{name}(")?;
-                write_args(f, args, indent)?;
-                write!(f, "){rx}{expr}")?;
-                Ok(())
+                fmt_seq!(
+                    f,
+                    v(name),
+                    " ",
+                    p(write_expr_args(f, args, indent, namespace)),
+                    v(rx),
+                    expr.fmt(f, indent, 0, namespace)
+                )
             }
             SimpleStatement::Command { name, args, redirection: None } => {
-                write!(f, "{name} ")?;
-                write_args(f, args, indent)
+                fmt_seq!(f, v(name), " ", write_expr_args(f, args, indent, namespace))
             }
             SimpleStatement::Delete(array, Some(args)) => {
-                write!(f, "delete {array}[")?;
-                write_args(f, args, indent)?;
-                write!(f, "]")
+                fmt_seq!(
+                    f,
+                    "delete ",
+                    array.fmt(f, namespace),
+                    bt(write_expr_args(f, args, indent, namespace))
+                )
             }
-            SimpleStatement::Delete(array, None) => write!(f, "delete {array}"),
+            SimpleStatement::Delete(array, None) => fmt_seq!(f, "delete ", array.fmt(f, namespace)),
         }
     }
 }
 
-impl Display for Rule<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Rule<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
         match (&self.pattern, &self.actions) {
             (None, None) => Ok(()),
-            (None, Some(body)) => write_body_ln(f, body, 0),
-            (Some(pat), None) => writeln!(f, "{pat};"),
+            (None, Some(body)) => write_body_ln(f, body, 0, namespace),
+            (Some(pat), None) => {
+                fmt_seq!(f, pat.fmt(f, namespace), " {{\n\tprint\n}}")
+            }
             (Some(pat), Some(body)) => {
-                write!(f, "{pat} ")?;
-                write_body_ln(f, body, 0)
+                pat.fmt(f, namespace)?;
+                f.write_char(' ')?;
+                write_body_ln(f, body, 0, namespace)
             }
         }
     }
 }
 
-impl Display for RulePattern<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl RulePattern<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
         match self {
-            Self::Range(a, b) => write!(f, "{a}, {b}"),
-            Self::Expression(x) => write!(f, "{x}"),
+            Self::Range(a, b) => {
+                fmt_seq!(f, a.fmt(f, 0, 0, namespace), ", ")?;
+                b.fmt(f, 0, 0, namespace)
+            }
+            Self::Expression(x) => x.fmt(f, 0, 0, namespace),
         }
     }
 }
 
-impl Display for Expr<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let (indent, prec) = decode(f);
+impl Expr<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, parent_bp: u8, namespace: &str) -> Result {
         match self {
-            Expr::Leaf(atom) => write!(f, "{atom}"),
-            Expr::Node(node) => write!(f, "{node:width$}", width = encode(indent, prec)),
+            Expr::Leaf(atom) => atom.fmt(f, namespace),
+            Expr::Node(node) => node.as_ref().fmt(f, indent, parent_bp, namespace),
+        }
+    }
+}
+impl Atom<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+        if let Self::Variable(var) = self {
+            var.fmt(f, namespace)
+        } else {
+            <Self as Debug>::fmt(self, f)
         }
     }
 }
 
-impl Display for Atom<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        <Self as Debug>::fmt(self, f)
-    }
-}
-
-impl Display for Variable<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        <Self as Debug>::fmt(self, f)
-    }
-}
-
-impl Display for Place<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+impl Variable<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
         match self {
-            Self::Variable(var) => <_ as Display>::fmt(var, f),
-            Self::Record(Expr::Leaf(leaf)) => write!(f, "${leaf}"),
-            Self::Record(Expr::Node(node)) => write!(f, "$({node})"),
+            Variable::User(ident) => ident.fmt(f, namespace),
+            _ => <_ as Debug>::fmt(self, f),
+        }
+    }
+}
+
+impl Place<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+        match self {
+            Self::Variable(var) => var.fmt(f, namespace),
+            Self::Record(Expr::Leaf(leaf)) => {
+                fmt_seq!(f, "$", leaf.fmt(f, namespace))
+            }
+            Self::Record(Expr::Node(node)) => {
+                fmt_seq!(f, "$", p(node.as_ref().fmt(f, 0, 0, namespace)))
+            }
             Self::Index(var, args) => {
-                write!(f, "{var}[")?;
-                write_args(f, args, 0)?;
-                write!(f, "]")
+                fmt_seq!(
+                    f,
+                    var.fmt(f, namespace),
+                    bt(write_expr_args(f, args, 0, namespace))
+                )
             }
             Self::ChainedIndex(arr, args) => {
-                write!(f, "{arr}[")?;
-                write_args(f, args, 0)?;
-                write!(f, "]")
+                fmt_seq!(
+                    f,
+                    arr.fmt(f, 0, 0, namespace),
+                    bt(write_expr_args(f, args, 0, namespace))
+                )
             }
         }
     }
 }
 
-impl Display for ExprNode<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let (indent, parent_bp) = decode(f);
-
+impl ExprNode<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, indent: u8, parent_bp: u8, namespace: &str) -> Result {
         match self {
             Self::FunctionCall(fun, args) => {
-                write!(f, "{fun}(")?;
-                write_args(f, args, indent)?;
-                write!(f, ")")
+                fmt_seq!(
+                    f,
+                    fun.fmt(f, namespace),
+                    p(write_expr_args(f, args, indent, namespace))
+                )
             }
             Self::IndirectCall(var, args) => {
-                write!(f, "@{var}(")?;
-                write_args(f, args, indent)?;
-                write!(f, ")")
+                fmt_seq!(
+                    f,
+                    "@",
+                    var.fmt(f, namespace),
+                    p(write_expr_args(f, args, indent, namespace))
+                )
             }
             Self::BuiltinCall(fun, args) => {
-                write!(f, "{fun}(")?;
-                write_args(f, args, indent)?;
-                write!(f, ")")
+                fmt_seq!(f, v(fun), p(write_expr_args(f, args, indent, namespace)))
             }
             Self::UnaryOperation(op, x) => {
                 let bp = op.binding_power();
-                let child_w = encode(indent, bp.saturating_add(1));
-                if bp < parent_bp {
-                    write!(f, "({op}{x:child_w$})")
-                } else {
-                    write!(f, "{op}{x:child_w$}")
-                }
+                let child_bp = bp.saturating_add(1);
+                fmt_seq!(
+                    f,
+                    maybe(
+                        bp < parent_bp,
+                        p(v(op), x.fmt(f, indent, child_bp, namespace))
+                    )
+                )
             }
             Self::BinaryOperation(op, a, b) => {
                 let (left_bp, right_bp) = op.binding_power();
-                let left_w = encode(indent, left_bp);
-                let right_w = encode(indent, right_bp);
-                if left_bp < parent_bp {
-                    write!(f, "({a:left_w$}{op}{b:right_w$})")
-                } else {
-                    write!(f, "{a:left_w$}{op}{b:right_w$}")
-                }
+                fmt_seq!(
+                    f,
+                    maybe(
+                        left_bp < parent_bp,
+                        p(
+                            a.fmt(f, indent, left_bp, namespace),
+                            v(op),
+                            b.fmt(f, indent, right_bp, namespace)
+                        )
+                    )
+                )
             }
             Self::UnaryPlaceOperation(op, place) => match op {
-                UnaryPlaceOperator::IncrementL => write!(f, "++{place}"),
-                UnaryPlaceOperator::DecrementL => write!(f, "--{place}"),
-                UnaryPlaceOperator::DecrementR => write!(f, "{place}--"),
-                UnaryPlaceOperator::IncrementR => write!(f, "{place}++"),
+                UnaryPlaceOperator::IncrementL => {
+                    write!(f, "++")?;
+                    place.fmt(f, namespace)
+                }
+                UnaryPlaceOperator::DecrementL => {
+                    write!(f, "--")?;
+                    place.fmt(f, namespace)
+                }
+                UnaryPlaceOperator::DecrementR => {
+                    place.fmt(f, namespace)?;
+                    write!(f, "--")
+                }
+                UnaryPlaceOperator::IncrementR => {
+                    place.fmt(f, namespace)?;
+                    write!(f, "++")
+                }
             },
             Self::BinaryPlaceOperation(op, place, idx) => {
                 let (left_bp, right_bp) = op.binding_power();
-                let right_w = encode(indent, right_bp);
-                if left_bp < parent_bp {
-                    write!(f, "({place}{op}{idx:right_w$})")
-                } else {
-                    write!(f, "{place}{op}{idx:right_w$}")
-                }
+                fmt_seq!(
+                    f,
+                    maybe(
+                        left_bp < parent_bp,
+                        p(
+                            place.fmt(f, namespace),
+                            v(op),
+                            idx.fmt(f, indent, right_bp, namespace)
+                        )
+                    )
+                )
             }
             Self::ArrayOperation(op, arr, args) => {
                 let (left_bp, right_bp) = op.binding_power();
-                let right_w = encode(indent, right_bp);
-                if left_bp < parent_bp {
-                    write!(f, "(")?;
-                }
-                match op {
-                    ArrayOperator::Index => {
-                        write!(f, "{arr}[")?;
-                        write_args(f, args, indent)?;
-                        write!(f, "]")?;
-                    }
-                    ArrayOperator::In if args.len() > 1 => {
-                        write!(f, "(")?;
-                        write_args(f, args, indent)?;
-                        write!(f, ") in {arr}")?;
-                    }
-                    ArrayOperator::In => {
-                        write!(f, "{:right_w$} in {arr}", args[0])?;
-                    }
-                }
-                if left_bp < parent_bp {
-                    write!(f, ")")?;
-                }
-                Ok(())
+                fmt_seq!(
+                    f,
+                    maybe(
+                        left_bp < parent_bp,
+                        p(match op {
+                            ArrayOperator::Index => {
+                                fmt_seq!(
+                                    f,
+                                    arr.fmt(f, namespace),
+                                    bt(write_expr_args(f, args, indent, namespace))
+                                )
+                            }
+                            ArrayOperator::In if args.len() > 1 => {
+                                fmt_seq!(
+                                    f,
+                                    p(write_expr_args(f, args, indent, namespace)),
+                                    " in ",
+                                    arr.fmt(f, namespace)
+                                )
+                            }
+                            ArrayOperator::In => {
+                                fmt_seq!(
+                                    f,
+                                    args[0].fmt(f, indent, right_bp, namespace),
+                                    " in ",
+                                    arr.fmt(f, namespace)
+                                )
+                            }
+                        })
+                    )
+                )
             }
             Self::NestedArray(arr, args) => {
                 let left_bp = ArrayOperator::Index.binding_power().0;
-                if left_bp < parent_bp {
-                    write!(f, "(")?;
-                }
-                write!(f, "{arr}[")?;
-                write_args(f, args, indent)?;
-                write!(f, "]")?;
-                if left_bp < parent_bp {
-                    write!(f, ")")?;
-                }
-                Ok(())
+                fmt_seq!(
+                    f,
+                    maybe(
+                        left_bp < parent_bp,
+                        p(
+                            arr.fmt(f, indent, left_bp, namespace),
+                            bt(write_expr_args(f, args, indent, namespace))
+                        )
+                    )
+                )
             }
             Self::Ternary(cond, then_expr, else_expr) => {
                 let ternary_bp = Ternary.binding_power().0;
-                let inner_w = encode(indent, 0);
-                if ternary_bp < parent_bp {
-                    write!(
-                        f,
-                        "({cond:inner_w$} ? {then_expr:inner_w$} : {else_expr:inner_w$})"
+                let child_bp = ternary_bp.saturating_add(1);
+                fmt_seq!(
+                    f,
+                    maybe(
+                        ternary_bp < parent_bp,
+                        p(
+                            cond.fmt(f, indent, child_bp, namespace),
+                            " ? ",
+                            then_expr.fmt(f, indent, child_bp, namespace),
+                            " : ",
+                            else_expr.fmt(f, indent, child_bp, namespace)
+                        )
                     )
-                } else {
-                    write!(
-                        f,
-                        "{cond:inner_w$} ? {then_expr:inner_w$} : {else_expr:inner_w$}"
-                    )
-                }
+                )
             }
             Self::Getline(getline) => match getline {
-                Getline::FromInput(Some(var)) => write!(f, "getline {var}"),
+                Getline::FromInput(Some(var)) => {
+                    fmt_seq!(f, "getline ", var.fmt(f, namespace))
+                }
                 Getline::FromInput(None) => write!(f, "getline"),
-                Getline::FromFile(Some(var), file) => write!(f, "getline {var} < {file}"),
-                Getline::FromFile(None, file) => write!(f, "getline < {file}"),
-                Getline::PipeOut(Some(place), e) => write!(f, "{e} | getline {place}"),
-                Getline::PipeOut(None, e) => write!(f, "{e} | getline"),
-                Getline::CoprocessOut(Some(place), e) => write!(f, "{e} |& getline {place}"),
-                Getline::CoprocessOut(None, e) => write!(f, "{e} |& getline"),
+                Getline::FromFile(Some(var), file) => {
+                    fmt_seq!(
+                        f,
+                        "getline ",
+                        var.fmt(f, namespace),
+                        " < ",
+                        file.fmt(f, indent, 0, namespace)
+                    )
+                }
+                Getline::FromFile(None, file) => {
+                    fmt_seq!(f, "getline < ", file.fmt(f, indent, 0, namespace))
+                }
+                Getline::PipeOut(Some(place), e) => {
+                    fmt_seq!(
+                        f,
+                        e.fmt(f, indent, 0, namespace),
+                        " | getline ",
+                        place.fmt(f, namespace)
+                    )
+                }
+                Getline::PipeOut(None, e) => {
+                    fmt_seq!(f, e.fmt(f, indent, 0, namespace), " | getline")
+                }
+                Getline::CoprocessOut(Some(place), e) => {
+                    fmt_seq!(
+                        f,
+                        e.fmt(f, indent, 0, namespace),
+                        " |& getline ",
+                        place.fmt(f, namespace)
+                    )
+                }
+                Getline::CoprocessOut(None, e) => {
+                    fmt_seq!(f, e.fmt(f, indent, 0, namespace), " |& getline")
+                }
             },
         }
+    }
+}
+
+impl Identifier<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
+        if namespace != self.namespace {
+            write!(f, "{}::", self.namespace)?;
+        }
+        <_ as Display>::fmt(self.literal, f)
     }
 }
 
 impl Display for UnaryOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Self::Record => write!(f, "$"),
-            Self::Negation => write!(f, "!"),
-            Self::ToInt => write!(f, "+"),
-            Self::Negative => write!(f, "-"),
+            Self::Record => f.write_char('$'),
+            Self::Negation => f.write_char('!'),
+            Self::ToInt => f.write_char('+'),
+            Self::Negative => f.write_char('-'),
         }
     }
 }
@@ -385,7 +536,7 @@ impl Display for UnaryOperator {
 impl Display for BinaryOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Self::Concat => write!(f, " "),
+            Self::Concat => f.write_char(' '),
             Self::Eq => write!(f, " == "),
             Self::NEq => write!(f, " != "),
             Self::Gt => write!(f, " > "),
@@ -486,35 +637,61 @@ impl Display for Redirection {
     }
 }
 
-fn write_args(f: &mut Formatter<'_>, args: &[impl Display], indent: u8) -> Result {
-    let ew = encode(indent, 0);
+impl<'a> NamespaceState<'a> {
+    fn advance(&mut self, f: &mut Formatter<'_>, ast: &Ast<'a>) -> Result {
+        // Heuristic: we know search range is upper-bounded by `len() - tl_ix`.
+        // Linear search is the best option given constraints.
+        if let Some((_, s)) = ast.ns_metadata.0.iter().find(|&&(i, _)| i == self.tl_ix) {
+            self.tl_ix += 1;
+            self.namespace = s;
+            writeln!(f, "@namespace \"{s}\"\n")?;
+        }
+        self.tl_ix += 1;
+        Ok(())
+    }
+}
+
+fn write_cb<T>(
+    f: &mut Formatter<'_>,
+    args: &[T],
+    cb: impl Fn(&mut Formatter<'_>, &T) -> Result,
+) -> Result {
     for (i, arg) in args.iter().enumerate() {
         if i != 0 {
             write!(f, ", ")?;
         }
-        write!(f, "{arg:ew$}")?;
+        cb(f, arg)?;
     }
     Ok(())
 }
 
-fn write_stmnts(f: &mut Formatter<'_>, body: &Body, indent: u8) -> Result {
-    let sw = encode(indent, 0);
-    for stmnt in &body.0 {
-        tabs(f, indent)?;
-        writeln!(f, "{stmnt:sw$}")?;
-    }
-    Ok(())
+fn write_args(f: &mut Formatter<'_>, args: &[Identifier], namespace: &str) -> Result {
+    write_cb(f, args, |f, ident| ident.fmt(f, namespace))
 }
 
-fn write_body(f: &mut Formatter<'_>, body: &Body, indent: u8) -> Result {
-    writeln!(f, "{{")?;
-    write_stmnts(f, body, indent + 1)?;
-    tabs(f, indent)?;
-    f.write_char('}')
+fn write_expr_args(f: &mut Formatter<'_>, args: &[Expr], indent: u8, namespace: &str) -> Result {
+    write_cb(f, args, |f, expr| expr.fmt(f, indent, 0, namespace))
 }
 
-fn write_body_ln(f: &mut Formatter<'_>, body: &Body, indent: u8) -> Result {
-    write_body(f, body, indent)?;
+fn write_stmnts(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
+    write_cb(f, &body.0, |f, stmnt| {
+        fmt_seq!(f, tabs(f, indent), stmnt.fmt(f, indent, namespace), "\n")
+    })
+}
+
+fn write_body(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
+    fmt_seq!(
+        f,
+        b(
+            "\n",
+            write_stmnts(f, body, indent + 1, namespace),
+            tabs(f, indent)
+        )
+    )
+}
+
+fn write_body_ln(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
+    write_body(f, body, indent, namespace)?;
     writeln!(f)
 }
 

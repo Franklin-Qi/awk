@@ -350,7 +350,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
             )
         } else if next.is_place() && lex.peek_is(&Token::OpenParent) && lex.is_yuxtaposed() {
             let name = match self.parser.get_place(lex, next) {
-                Ok(var) => var.to_string(),
+                Ok(var) => format!("{var:?}"),
                 Err((_, tok)) => format!("{tok:?}"),
             };
             Err(ParsingError::SpecialVariableCall(
