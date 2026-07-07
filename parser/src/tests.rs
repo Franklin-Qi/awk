@@ -347,6 +347,8 @@ fn test_parser_inc_dec() {
         { a++ a["x"]-- }
         { --a $"a"++ }
         { --a/a++ a++/--a }
+        { $(a--) $a++ }
+        { $--a $(++a) }
     "#;
     test_parser!(source => {
         rules: [
@@ -360,7 +362,11 @@ fn test_parser_inc_dec() {
             (None, Some("(body (Concat (IncrementR awk::a) (DecrementR (Index awk::a \"x\"))))")),
             (None, Some("(body (Concat (DecrementL awk::a) (IncrementR (Record \"a\"))))")),
             (None, Some("(body (Concat (Divide (DecrementL awk::a) (IncrementR awk::a)) \
-                                       (Divide (IncrementR awk::a) (DecrementL awk::a))))"))
+                                       (Divide (IncrementR awk::a) (DecrementL awk::a))))")),
+            (None, Some("(body (Concat (Record (DecrementR awk::a)) \
+                                       (IncrementR (Record awk::a))))")),
+            (None, Some("(body (Concat (Record (DecrementL awk::a)) \
+                                       (Record (IncrementL awk::a))))"))
         ],
     });
     // these should parse as (Cat (--L (++R $0)) a), or otherwise error out.
@@ -878,6 +884,34 @@ fn test_parser_unary_and_divide() {
             (None, Some("(body (Int awk::a))")),
         ],
     });
+}
+
+#[test]
+fn test_parser_proper_assignments() {
+    let source = r"
+        { a = 1 }
+        { $a = 1 }
+        { a[2] = 1 }
+        { a[2, 1] = 1 }
+        { a[2][1] = 1 }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Assignment awk::a 1))")),
+            (None, Some("(body (Assignment (Record awk::a) 1))")),
+            (None, Some("(body (Assignment (Index awk::a 2) 1))")),
+            (None, Some("(body (Assignment (Index awk::a 2 1) 1))")),
+            (None, Some("(body (Assignment (Index (Index awk::a 2) 1) 1))"))
+        ],
+    });
+    test_parser!(is_err!(
+        "{ (a) = 1 }",
+        "{ ($a) = 1 }",
+        "{ (a[2]) = 1 }",
+        "{ (a)[2] = 1 }",
+        "{ (a[2, 1]) = 1 }",
+        "{ (a[2][1]) = 1 }"
+    ));
 }
 
 #[test]
