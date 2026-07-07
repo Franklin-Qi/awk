@@ -234,6 +234,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
     ) -> Result<Expr<'a>> {
         self.typed_regex = false;
         let inner = self.parse(lex)?;
+        // Handle cases where the parenthesis are the lhs of an mdim `in` array.
         if min_bp < UnaryOperator::Record.binding_power() && lex.peek_is(&Token::Comma) {
             let expr = self.parse_comma_expr(lex, inner)?;
             lex.expect(&Token::ClosedParent, |s| {
@@ -259,6 +260,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
             lex.expect(&Token::ClosedParent, |s| {
                 ParsingError::UnclosedParenthesisExpression(subexpr_span(anchor, s.end))
             })?;
+            let inner = Expr::node(ExprNode::Parenthesized(inner), self.parser.arena);
             Ok(inner)
         }
     }

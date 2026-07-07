@@ -176,6 +176,8 @@ impl Debug for Expr<'_> {
         match self {
             Self::Leaf(atom) => write!(f, "{atom:?}"),
             Self::Node(expr) => match expr.as_ref() {
+                // This is an AST construct, and S-exprs are precedence-free.
+                ExprNode::Parenthesized(expr) => expr.fmt(f),
                 ExprNode::FunctionCall(ident, args) => {
                     write!(f, "({ident:?}")?;
                     for arg in args {

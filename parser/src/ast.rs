@@ -96,6 +96,7 @@ pub type Pattern<'a> = Either<RulePattern<'a>, SpecialPattern>;
 
 #[derive(Debug)]
 pub enum ExprNode<'a> {
+    Parenthesized(Expr<'a>),
     FunctionCall(Identifier<'a>, Vec<'a, Expr<'a>>),
     IndirectCall(Variable<'a>, Vec<'a, Expr<'a>>),
     BuiltinCall(BuiltinFunction, Vec<'a, Expr<'a>>),

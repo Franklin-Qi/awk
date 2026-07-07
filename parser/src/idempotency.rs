@@ -302,6 +302,12 @@ impl Place<'_> {
             Self::Record(Expr::Leaf(leaf)) => {
                 fmt_seq!(f, "$", leaf.fmt(f, namespace))
             }
+            // Handles edge cases of `$(literal) = rvalue`.
+            Self::Record(Expr::Node(node))
+                if let ExprNode::Parenthesized(Expr::Leaf(leaf)) = node.as_ref() =>
+            {
+                fmt_seq!(f, "$", leaf.fmt(f, namespace))
+            }
             Self::Record(Expr::Node(node)) => {
                 fmt_seq!(f, "$", p(node.as_ref().fmt(f, 0, 0, namespace)))
             }
@@ -326,6 +332,8 @@ impl Place<'_> {
 impl ExprNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>, indent: u8, parent_bp: u8, namespace: &str) -> Result {
         match self {
+            // This is an AST construct; the bp checks resolve parenthesis.
+            Self::Parenthesized(expr) => expr.fmt(f, indent, parent_bp, namespace),
             Self::FunctionCall(fun, args) => {
                 fmt_seq!(
                     f,
@@ -369,24 +377,23 @@ impl ExprNode<'_> {
                     )
                 )
             }
-            Self::UnaryPlaceOperation(op, place) => match op {
-                UnaryPlaceOperator::IncrementL => {
-                    write!(f, "++")?;
-                    place.fmt(f, namespace)
+            Self::UnaryPlaceOperation(op, place) => {
+                let bp = op.binding_power();
+                match op {
+                    UnaryPlaceOperator::IncrementL => {
+                        fmt_seq!(f, maybe(bp < parent_bp, p("++", place.fmt(f, namespace))))
+                    }
+                    UnaryPlaceOperator::DecrementL => {
+                        fmt_seq!(f, maybe(bp < parent_bp, p("--", place.fmt(f, namespace))))
+                    }
+                    UnaryPlaceOperator::DecrementR => {
+                        fmt_seq!(f, maybe(bp < parent_bp, p(place.fmt(f, namespace), "--")))
+                    }
+                    UnaryPlaceOperator::IncrementR => {
+                        fmt_seq!(f, maybe(bp < parent_bp, p(place.fmt(f, namespace), "++")))
+                    }
                 }
-                UnaryPlaceOperator::DecrementL => {
-                    write!(f, "--")?;
-                    place.fmt(f, namespace)
-                }
-                UnaryPlaceOperator::DecrementR => {
-                    place.fmt(f, namespace)?;
-                    write!(f, "--")
-                }
-                UnaryPlaceOperator::IncrementR => {
-                    place.fmt(f, namespace)?;
-                    write!(f, "++")
-                }
-            },
+            }
             Self::BinaryPlaceOperation(op, place, idx) => {
                 let (left_bp, right_bp) = op.binding_power();
                 fmt_seq!(
