@@ -17,9 +17,6 @@ use crate::{
 // Sorry not sorry for the DSL.
 macro_rules! fmt_seq {
     ($f:expr $(,)?) => { Ok(()) };
-    ($f:expr, v($var:ident) $(, $($rest:tt)*)?) => {{
-        fmt_seq!($f, write!($f, "{}", $var) $(, $($rest)*)?)
-    }};
     ($f:expr, select($c:expr, ($($a:tt)*), ($($b:tt)*)) $(, $($rest:tt)*)?) => {{
         if $c {
             fmt_seq!($f, $($a)* $(, $($rest)*)?)
@@ -220,15 +217,14 @@ impl SimpleStatement<'_> {
             SimpleStatement::Command { name, args, redirection: Some((rx, expr)) } => {
                 fmt_seq!(
                     f,
-                    v(name),
-                    " ",
+                    " {name}",
                     p(write_expr_args(f, args, indent, namespace)),
-                    v(rx),
+                    "{rx}",
                     expr.fmt(f, indent, 0, namespace)
                 )
             }
             SimpleStatement::Command { name, args, redirection: None } => {
-                fmt_seq!(f, v(name), " ", write_expr_args(f, args, indent, namespace))
+                fmt_seq!(f, "{name} ", write_expr_args(f, args, indent, namespace))
             }
             SimpleStatement::Delete(array, Some(args)) => {
                 fmt_seq!(
@@ -346,7 +342,7 @@ impl ExprNode<'_> {
                 )
             }
             Self::BuiltinCall(fun, args) => {
-                fmt_seq!(f, v(fun), p(write_expr_args(f, args, indent, namespace)))
+                fmt_seq!(f, "{fun}", p(write_expr_args(f, args, indent, namespace)))
             }
             Self::UnaryOperation(op, x) => {
                 let bp = op.binding_power();
@@ -355,7 +351,7 @@ impl ExprNode<'_> {
                     f,
                     maybe(
                         bp < parent_bp,
-                        p(v(op), x.fmt(f, indent, child_bp, namespace))
+                        p("{op}", x.fmt(f, indent, child_bp, namespace))
                     )
                 )
             }
@@ -367,7 +363,7 @@ impl ExprNode<'_> {
                         left_bp < parent_bp,
                         p(
                             a.fmt(f, indent, left_bp, namespace),
-                            v(op),
+                            "{op}",
                             b.fmt(f, indent, right_bp, namespace)
                         )
                     )
@@ -399,7 +395,7 @@ impl ExprNode<'_> {
                         left_bp < parent_bp,
                         p(
                             place.fmt(f, namespace),
-                            v(op),
+                            "{op}",
                             idx.fmt(f, indent, right_bp, namespace)
                         )
                     )
