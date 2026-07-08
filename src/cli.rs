@@ -14,57 +14,57 @@ pub struct Args {
     // POSIX
     pub code: OsString,
     #[arg(short = 'f', long)]
-    file: Option<PathBuf>,
+    pub file: Option<PathBuf>,
     #[arg(short = 'F', long)]
-    field_separator: Option<OsString>,
+    pub field_separator: Option<OsString>,
     #[arg(short = 'v', long, value_parser = parse_kv)]
-    assign: Vec<(String, String)>,
+    pub assign: Vec<(String, String)>,
     #[arg(short = 'b', long)]
-    characters_as_bytes: bool,
+    pub characters_as_bytes: bool,
     #[arg(short = 'c', long)]
-    traditional: bool,
+    pub traditional: bool,
     #[arg(short = 'C', long)]
-    copyright: bool,
+    pub copyright: bool,
     #[arg(short = 'd', long)]
-    dump_variables: Option<PathBuf>,
+    pub dump_variables: Option<PathBuf>,
     #[arg(short = 'D', long)]
-    debug: Option<PathBuf>,
+    pub debug: Option<PathBuf>,
     #[arg(short = 'e', long)]
-    source: Vec<u8>,
+    pub source: Vec<u8>,
     #[arg(short = 'E', long)]
-    exec: Option<PathBuf>,
+    pub exec: Option<PathBuf>,
     #[arg(short = 'g', long)]
-    gen_pot: bool,
+    pub gen_pot: bool,
     #[arg(short = 'i', long)]
-    include: Option<PathBuf>,
+    pub include: Option<PathBuf>,
     #[arg(short = 'I', long)]
-    trace: bool,
+    pub trace: bool,
     #[arg(short = 'l', long)]
-    load: Vec<OsString>,
+    pub load: Vec<OsString>,
     #[arg(short = 'L', long)]
-    lint: Vec<String>,
+    pub lint: Vec<String>,
     #[arg(short = 'M', long)]
-    bignum: bool,
+    pub bignum: bool,
     #[arg(short = 'n', long)]
-    non_decimal_data: bool,
+    pub non_decimal_data: bool,
     #[arg(short = 'N', long)]
-    use_lc_numeric: bool,
-    #[arg(short = 'o', long)]
-    pretty_print: Option<PathBuf>,
+    pub use_lc_numeric: bool,
+    #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "./awkprof.out")]
+    pub pretty_print: Option<PathBuf>,
     #[arg(short = 'O', long, default_value_t = true)]
-    optimize: bool,
+    pub optimize: bool,
     #[arg(short = 's', long = "no-optimize")]
-    no_optimize: bool,
-    #[arg(short = 'p', long)]
-    profile: Option<PathBuf>,
+    pub no_optimize: bool,
+    #[arg(short = 'p', num_args = 0..=1, long)]
+    pub profile: Option<PathBuf>,
     #[arg(short = 'P', long)]
-    posix: bool,
+    pub posix: bool,
     #[arg(short = 'r', long, default_value_t = true)]
-    re_interval: bool,
+    pub re_interval: bool,
     #[arg(short = 'S', long)]
-    sandbox: bool,
+    pub sandbox: bool,
     #[arg(short = 't', long)]
-    lint_old: bool,
+    pub lint_old: bool,
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {

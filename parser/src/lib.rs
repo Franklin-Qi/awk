@@ -41,6 +41,8 @@ pub struct Parser<'a> {
     current_file: &'a str,
     namespace: &'a str,
     concurrent: bool,
+    // Disables file include materialization ands enables metadata recording.
+    dry: bool,
 }
 
 type AriadneErr<'a> = (
@@ -50,7 +52,7 @@ type AriadneErr<'a> = (
 
 impl<'a> Parser<'a> {
     #[tracing::instrument]
-    pub fn new(arena: &'a Bump) -> Self {
+    pub fn new(arena: &'a Bump, dry: bool) -> Self {
         Self {
             ast: Ast::new(arena),
             arena,
@@ -58,6 +60,7 @@ impl<'a> Parser<'a> {
             current_file: "",
             namespace: "awk",
             concurrent: false,
+            dry,
         }
     }
 
@@ -138,7 +141,9 @@ impl<'a> Parser<'a> {
                         }
                         let i = self.ast.ns_metadata.1;
                         self.namespace = namespace;
-                        self.ast.ns_metadata.0.push((i, namespace));
+                        if self.dry {
+                            self.ast.ns_metadata.0.push((i, namespace));
+                        }
                     }
                     Token::ConcurrentDirective => {
                         if lex.peek_with(|t| t.maps_to_special_pat().is_some()) || self.concurrent {

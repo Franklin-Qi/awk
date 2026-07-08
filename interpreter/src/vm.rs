@@ -20,7 +20,7 @@ use parser::{Command, Identifier, Redirection};
 use crate::{
     ir::{
         Instruction, Label, NonLocal, Reg,
-        lower::{Bytecode, Code},
+        lower::{Bytecode, CodeGen},
     },
     types::Value,
 };
@@ -59,7 +59,7 @@ pub struct SymbolTable<'a> {
 pub struct Consts<'a>(pub IndexSet<Value<'a>, RandomState, &'a Bump>);
 
 impl<'a> Interpreter<'a> {
-    pub fn new(compat: ExecMode, code: Code<'a>) -> Self {
+    pub fn new(compat: ExecMode, code: CodeGen<'a>) -> Self {
         let n_regs = code.reg_pointer as usize + 1;
         Self {
             arena: code.arena,
@@ -102,6 +102,22 @@ impl<'a> SymbolTable<'a> {
             };
             NonLocal(self.user.insert_full(ident, Value::Untyped).0 as _)
         }
+    }
+
+    pub fn register_user_var_with(&mut self, var: &Identifier, val: &str, bump: &'a Bump) {
+        let ident = Identifier {
+            namespace: bump.alloc_str(var.namespace),
+            literal: bump.alloc_str(var.literal),
+        };
+        self.user.insert(
+            ident,
+            if let Ok(n) = val.parse() {
+                // TODO: use strnum
+                Value::Float(n)
+            } else {
+                Value::String(bump.alloc_str(val).as_bytes().into())
+            },
+        );
     }
 
     pub fn record(&self, value: Value<'a>) -> &Value<'a> {
@@ -309,7 +325,7 @@ impl Display for Interpreter<'_> {
     }
 }
 
-impl Display for Code<'_> {
+impl Display for CodeGen<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}\n", self.bc)?;
         writeln!(f, "{}\n", self.symbols)?;

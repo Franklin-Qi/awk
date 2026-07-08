@@ -14,7 +14,6 @@ pub mod lower;
 
 use std::fmt::{self, Debug, Display, Formatter};
 
-pub use lower::test_interpreter;
 use parser::{Command, Redirection};
 
 pub type RegWidth = u8;

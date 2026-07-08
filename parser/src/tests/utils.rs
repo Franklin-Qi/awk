@@ -10,13 +10,13 @@ use bumpalo::Bump;
 use crate::{Ast, Lexer, Parser, Result};
 
 pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> Result<&'a Ast<'a>> {
-    let parser = arena.alloc(Parser::new(arena));
+    let parser = arena.alloc(Parser::new(arena, true));
     parser.parse_top(&mut Lexer::new(source.as_bytes(), arena), true)
 }
 
 pub fn parse_error_span(source: &str) -> std::ops::Range<usize> {
     let arena = Bump::new();
-    let parser = arena.alloc(Parser::new(&arena));
+    let parser = arena.alloc(Parser::new(&arena, true));
     match parser.parse_top(&mut Lexer::new(source.as_bytes(), &arena), true) {
         Err(err) => err.span().expect("expected a span-bearing parse error"),
         Ok(_) => panic!("expected parse error for {source:?}"),
@@ -159,7 +159,7 @@ pub fn ast_signature(ast: &Ast<'_>) -> String {
 }
 
 pub fn parse_top<'a>(source: &'a str, arena: &'a Bump) -> Result<&'a Ast<'a>> {
-    let parser = arena.alloc(Parser::new(arena));
+    let parser = arena.alloc(Parser::new(arena, true));
     parser.parse_top(&mut Lexer::new(source.as_bytes(), arena), true)
 }
 

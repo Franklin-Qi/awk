@@ -110,7 +110,7 @@ fn write_special_rule<'a>(
 ) -> Result {
     for body in rules {
         state.advance(f, this)?;
-        fmt_seq!(f, "{lb}", write_body_ln(f, body, 0, state.namespace), "\n")?;
+        fmt_seq!(f, "{lb} ", write_body_ln(f, body, 0, state.namespace), "\n")?;
     }
     Ok(())
 }

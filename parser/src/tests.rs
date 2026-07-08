@@ -814,7 +814,7 @@ fn test_pretty_print_omits_default_namespace() {
     use std::fmt::Write;
 
     let arena = Bump::new();
-    let parser = arena.alloc(Parser::new(&arena));
+    let parser = arena.alloc(Parser::new(&arena, true));
     let source = "{ print a + b }";
     let ast = parser.parse("test", source.as_bytes()).unwrap();
     let mut printed = String::new();
@@ -831,7 +831,7 @@ fn test_pretty_print_namespace_directive() {
     use std::fmt::Write;
 
     let arena = Bump::new();
-    let parser = arena.alloc(Parser::new(&arena));
+    let parser = arena.alloc(Parser::new(&arena, true));
     let source = r#"
         @namespace "myns";
         function bar(x) { print x }
@@ -854,7 +854,7 @@ fn test_pretty_print_namespace_roundtrip() {
     use std::fmt::Write;
 
     let arena = Bump::new();
-    let parser = arena.alloc(Parser::new(&arena));
+    let parser = arena.alloc(Parser::new(&arena, true));
     let source = r#"
         @namespace "myns";
         function bar() { x = 1 }
@@ -865,7 +865,7 @@ fn test_pretty_print_namespace_roundtrip() {
     write!(printed, "{ast}").unwrap();
 
     let arena2 = Bump::new();
-    let parser2 = arena2.alloc(Parser::new(&arena2));
+    let parser2 = arena2.alloc(Parser::new(&arena2, true));
     let reparsed = parser2.parse("test", printed.as_bytes()).unwrap();
     assert_eq!(ast.functions.len(), reparsed.functions.len());
     assert_eq!(ast.rules.len(), reparsed.rules.len());

@@ -8,16 +8,13 @@
 mod cli;
 mod utils;
 
-use std::{
-    env::args_os,
-    io::{self, Write},
-};
+use std::{env::args_os, fs};
 
 use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
-use interpreter::test_interpreter;
-use parser::{Parser, Rule};
+use interpreter::{CodeGen, ExecMode, Interpreter};
+use parser::Parser;
 
 use crate::{
     cli::Args,
@@ -40,36 +37,32 @@ fn uu_main() -> Result<()> {
         }
     };
 
-    let arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
-    let mut parser = Parser::new(&arena);
-    let ast = match parser.parse("CLI", args.code.as_encoded_bytes()) {
-        Ok(ast) => dbg!(ast),
-        Err((report, source)) => {
-            report.eprint(("CLI", source)).unwrap();
-            return Ok(());
-        }
-    };
-    if let Err(e) = writeln!(io::stdout(), "---\n{ast}")
-        && e.kind() != io::ErrorKind::BrokenPipe
-    {
-        exit_err(Some(format!("awk: error writing to standard output: {e}")));
-    }
-    dbg!(arena.chunk_capacity());
+    let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
+    let cg = {
+        let ast_arena = Bump::with_capacity(4000);
+        let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
+        let ast = match parser.parse("CLI", args.code.as_encoded_bytes()) {
+            Ok(ast) => ast,
+            Err((report, source)) => {
+                report.eprint(("CLI", source)).unwrap();
+                return Ok(());
+            }
+        };
 
-    if let Some(Rule { actions: Some(body), pattern: _ }) = ast.rules.first() {
-        let x = test_interpreter(body);
-        if let Err(e) = writeln!(io::stdout(), "---\n{x}")
-            && e.kind() != io::ErrorKind::BrokenPipe
-        {
-            exit_err(Some(format!("awk: error writing to standard output: {e}")));
+        if let Some(file) = args.pretty_print {
+            fs::write(file, format!("{ast}"))?;
         }
+
+        let mut cg = CodeGen::new(&rt_arena);
+        cg.lower_ast(ast);
+        cg
+    };
+
+    for (_k, _v) in args.assign {
+        todo!()
     }
-    // for token in lex {
-    //     let Ok(x) = token else {
-    //         return token.map(drop).map_err(color_eyre::Report::from);
-    //     };
-    //     println!("{x:?}");
-    // }
-    // exit_with(Interpreter.run())
+
+    Interpreter::new(ExecMode::Uu, cg).run();
+
     Ok(())
 }

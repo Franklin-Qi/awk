@@ -8,7 +8,8 @@ pub(crate) mod ir;
 mod types;
 mod vm;
 
-pub use ir::test_interpreter;
+pub use ir::lower::CodeGen;
+pub use vm::{ExecMode, Interpreter};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]

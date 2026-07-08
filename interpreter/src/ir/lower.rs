@@ -7,24 +7,25 @@ use std::{borrow::Cow, mem::forget, ops::Deref};
 
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
+use indexmap_allocator_api::IndexSet;
 use parser::{
-    Atom, BinaryOperator, BinaryPlaceOperator, Body, Expr, ExprNode, Identifier, Place,
+    Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Expr, ExprNode, Identifier, Place,
     SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
 };
 
 use crate::{
     ir::{Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth},
     types::Value,
-    vm::{Consts, ExecMode, Interpreter, SymbolTable},
+    vm::{Consts, SymbolTable},
 };
 
-pub struct Code<'arena> {
-    pub arena: &'arena Bump,
-    pub bc: Bytecode<'arena>,
-    pub consts: Consts<'arena>,
-    pub symbols: SymbolTable<'arena>,
-    free_regs: Vec<'arena, Reg>,
-    pub reg_pointer: RegWidth,
+pub struct CodeGen<'a> {
+    pub(crate) arena: &'a Bump,
+    pub(crate) bc: Bytecode<'a>,
+    pub(crate) consts: Consts<'a>,
+    pub(crate) symbols: SymbolTable<'a>,
+    free_regs: Vec<'a, Reg>,
+    pub(crate) reg_pointer: RegWidth,
 }
 
 #[must_use]
@@ -41,7 +42,24 @@ enum Operand {
     Reg(LinearReg),
 }
 
-impl<'a> Code<'a> {
+impl<'a> CodeGen<'a> {
+    pub fn new(arena: &'a Bump) -> Self {
+        Self {
+            arena,
+            bc: Bytecode { code: Vec::new_in(arena) },
+            consts: Consts(IndexSet::new_in(arena)),
+            symbols: SymbolTable::new_in(arena),
+            free_regs: Vec::new_in(arena),
+            reg_pointer: 0,
+        }
+    }
+
+    pub fn lower_ast(&mut self, _ast: &Ast) {}
+
+    pub fn set_value(&mut self, var: &Identifier<'_>, value: &str) {
+        self.symbols.register_user_var_with(var, value, self.arena);
+    }
+
     fn lower_body(&mut self, body: &Body) {
         for stmnt in &body.0 {
             self.lower_statement(stmnt);
@@ -399,7 +417,7 @@ impl<'a> Code<'a> {
     fn gen_call_convention<T>(
         &mut self,
         args: &[Expr<'_>],
-        extra: impl FnOnce(&mut Code) -> T,
+        extra: impl FnOnce(&mut CodeGen) -> T,
     ) -> (Reg, Reg, T) {
         RegsState::new(self)
             .scope(self, |this| {
@@ -474,14 +492,14 @@ impl<'a> Bytecode<'a> {
 }
 
 impl RegsState {
-    fn new(code: &Code) -> Self {
+    fn new(code: &CodeGen) -> Self {
         Self {
             reg_pointer: code.reg_pointer,
             n_free_regs: code.free_regs.len(),
         }
     }
 
-    fn scope<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) -> (Self, T) {
+    fn scope<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) -> (Self, T) {
         let ret = f(code);
         let old = code.reg_pointer;
         code.reg_pointer = self.reg_pointer;
@@ -489,27 +507,11 @@ impl RegsState {
         (Self { reg_pointer: old, ..self }, ret)
     }
 
-    fn scope_hwm<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) {
+    fn scope_hwm<T>(self, code: &mut CodeGen, f: impl FnOnce(&mut CodeGen) -> T) {
         f(code);
         code.reg_pointer = code.reg_pointer.max(self.reg_pointer);
         code.free_regs.truncate(self.n_free_regs);
     }
-}
-
-pub fn test_interpreter(stmnt: &Body<'_>) -> String {
-    let bump = Bump::with_capacity(16384);
-    let mut c = Code {
-        arena: &bump,
-        bc: Bytecode::new_in(&bump),
-        consts: Consts::new_in(&bump),
-        symbols: SymbolTable::new_in(&bump),
-        reg_pointer: 0,
-        free_regs: Vec::new_in(&bump),
-    };
-    c.lower_body(stmnt);
-    let mut vm = Interpreter::new(ExecMode::Uu, c);
-    vm.run();
-    vm.to_string()
 }
 
 fn lower_assign_ops(op: BinaryPlaceOperator) -> Option<BinaryOperator> {
@@ -578,7 +580,7 @@ impl Operand {
         }
     }
 
-    fn free(self, code: &mut Code) {
+    fn free(self, code: &mut CodeGen) {
         if let Self::Reg(reg) = self {
             code.free_reg(reg);
         }
@@ -586,7 +588,7 @@ impl Operand {
 }
 
 impl TypedArg {
-    fn new_us(code: &mut Code<'_>, ident: &Identifier<'_>) -> Self {
+    fn new_us(code: &mut CodeGen<'_>, ident: &Identifier<'_>) -> Self {
         let sym = code.symbols.register_user_var(ident, code.arena);
         Self(Arg { sym }, ArgTy::UsVal)
     }
@@ -599,12 +601,12 @@ impl TypedArg {
         Self(Arg { imm }, ArgTy::Imm)
     }
 
-    fn new_immf(code: &mut Code<'_>, n: f64) -> Self {
+    fn new_immf(code: &mut CodeGen<'_>, n: f64) -> Self {
         let sym = code.register_const(Value::Float(n));
         Self(Arg { sym }, ArgTy::ImmF)
     }
 
-    fn new_cnt<'a>(code: &mut Code<'a>, val: Value<'a>) -> Self {
+    fn new_cnt<'a>(code: &mut CodeGen<'a>, val: Value<'a>) -> Self {
         let sym = code.register_const(val);
         Self(Arg { sym }, ArgTy::Cnt)
     }
