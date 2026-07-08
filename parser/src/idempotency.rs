@@ -629,9 +629,10 @@ fn write_expr_args(f: &mut Formatter<'_>, args: &[Expr], indent: u8, namespace: 
 }
 
 fn write_stmnts(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
-    write_cb(f, &body.0, |f, stmnt| {
-        fmt_seq!(f, tabs(f, indent), stmnt.fmt(f, indent, namespace), "\n")
-    })
+    for stmnt in &body.0 {
+        fmt_seq!(f, tabs(f, indent), stmnt.fmt(f, indent, namespace), "\n")?;
+    }
+    Ok(())
 }
 
 fn write_body(f: &mut Formatter<'_>, body: &Body, indent: u8, namespace: &str) -> Result {
