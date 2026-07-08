@@ -63,8 +63,8 @@ impl<'a> Interpreter<'a> {
         let n_regs = code.reg_pointer as usize + 1;
         Self {
             arena: code.arena,
+            program_counter: code.bc.begin_label.0 as _,
             bc: code.bc,
-            program_counter: 0,
             registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs]),
             symbols: code.symbols,
             consts: code.consts,

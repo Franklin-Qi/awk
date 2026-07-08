@@ -9,8 +9,9 @@ use bumpalo::{Bump, collections::Vec};
 use either::Either;
 use indexmap_allocator_api::IndexSet;
 use parser::{
-    Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Expr, ExprNode, Identifier, Place,
-    SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator, Variable,
+    Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode, Identifier,
+    Place, Rule, RulePattern, SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator,
+    Variable,
 };
 
 use crate::{
@@ -46,7 +47,7 @@ impl<'a> CodeGen<'a> {
     pub fn new(arena: &'a Bump) -> Self {
         Self {
             arena,
-            bc: Bytecode { code: Vec::new_in(arena) },
+            bc: Bytecode::new_in(arena),
             consts: Consts(IndexSet::new_in(arena)),
             symbols: SymbolTable::new_in(arena),
             free_regs: Vec::new_in(arena),
@@ -54,7 +55,57 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    pub fn lower_ast(&mut self, _ast: &Ast) {}
+    pub fn lower_ast(&mut self, ast: &Ast) {
+        self.bc.begin_label = self.lower_special_rules(&ast.begin);
+        self.bc.begin_file_label = self.lower_special_rules(&ast.begin_file);
+        self.bc.end_file_label = self.lower_special_rules(&ast.end_file);
+        self.bc.end_label = self.lower_special_rules(&ast.end);
+        self.bc.records_label = Label(self.bc.len());
+
+        for rule in &ast.rules {
+            self.lower_rule(rule);
+        }
+    }
+
+    fn lower_special_rules(&mut self, rules: &[Body]) -> Label {
+        let start_label = Label(self.bc.len());
+        for body in rules {
+            self.lower_body(body);
+        }
+        start_label
+    }
+
+    fn lower_rule(&mut self, Rule { pattern, actions }: &Rule) -> Label {
+        let start_label = Label(self.bc.len());
+        if let Some(pattern) = pattern {
+            match pattern {
+                RulePattern::Expression(expr) => {
+                    self.emit_branch(expr, |this| this.lower_actions(actions.as_ref()));
+                }
+                RulePattern::Range(_, _) => todo!(),
+            }
+        } else {
+            self.lower_actions(actions.as_ref());
+        }
+        start_label
+    }
+
+    fn lower_actions(&mut self, actions: Option<&Body>) {
+        if let Some(actions) = actions {
+            self.lower_body(actions);
+        } else {
+            let reg = self.alloc_reg();
+            self.bc
+                .emit(Instruction::Record { dest: *reg, arg: Arg { imm: 0 }, ty: ArgTy::Imm });
+            self.bc.emit(Instruction::OutputCall {
+                start: *reg,
+                end: Reg((*reg).0 + 1),
+                cmd: Command::Print,
+                redir: None,
+            });
+            self.free_reg(reg);
+        }
+    }
 
     pub fn set_value(&mut self, var: &Identifier<'_>, value: &str) {
         self.symbols.register_user_var_with(var, value, self.arena);
@@ -463,6 +514,11 @@ impl<'a> CodeGen<'a> {
 #[derive(Clone)]
 pub struct Bytecode<'a> {
     pub code: Vec<'a, Instruction>,
+    pub begin_label: Label,
+    pub begin_file_label: Label,
+    pub end_file_label: Label,
+    pub end_label: Label,
+    pub records_label: Label,
 }
 
 #[derive(Clone, Debug)]
@@ -473,7 +529,14 @@ struct RegsState {
 
 impl<'a> Bytecode<'a> {
     fn new_in(bump: &'a Bump) -> Self {
-        Self { code: Vec::with_capacity_in(64, bump) }
+        Self {
+            code: Vec::with_capacity_in(64, bump),
+            begin_label: Label(0),
+            begin_file_label: Label(0),
+            end_file_label: Label(0),
+            end_label: Label(0),
+            records_label: Label(0),
+        }
     }
 
     #[inline(always)]
