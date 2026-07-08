@@ -8,9 +8,9 @@ use std::fmt::Write;
 use bumpalo::Bump;
 use proptest::prelude::*;
 
-use crate::testing::{
+use crate::tests::{
     ast_gen::{self, GenAtom, GenBody, GenExpr, GenPattern, GenProgram, GenRule, GenStatement},
-    roundtrip_ast, roundtrip_source,
+    utils::{roundtrip_ast, roundtrip_source},
 };
 
 proptest! {
@@ -20,24 +20,24 @@ proptest! {
     })]
 
     #[test]
-    fn roundtrip_generated_program(program in ast_gen::gen_program()) {
+    fn test_parser_roundtrip_generated_program(program in ast_gen::gen_program()) {
         let arena = Bump::new();
         let ast = ast_gen::materialize(&program, &arena);
-        roundtrip_ast(&ast).map_err(|e| TestCaseError::fail(e))?;
+        roundtrip_ast(&ast).map_err(TestCaseError::fail)?;
     }
 
     #[test]
-    fn roundtrip_generated_source(program in ast_gen::gen_program()) {
+    fn test_parser_roundtrip_generated_source(program in ast_gen::gen_program()) {
         let arena = Bump::new();
         let ast = ast_gen::materialize(&program, &arena);
         let mut source = String::new();
         write!(source, "{ast}").map_err(|e| TestCaseError::fail(format!("display failed: {e}")))?;
-        roundtrip_source(&source).map_err(|e| TestCaseError::fail(e))?;
+        roundtrip_source(&source).map_err(TestCaseError::fail)?;
     }
 }
 
 #[test]
-fn roundtrip_smoke_cases() {
+fn test_parser_roundtrip_smoke_cases() {
     let cases = [
         "{ print 1 + a }",
         "BEGIN { print 1 }",
@@ -54,7 +54,7 @@ fn roundtrip_smoke_cases() {
 }
 
 #[test]
-fn roundtrip_handwritten_ast() {
+fn test_parser_roundtrip_handwritten_ast() {
     let program = GenProgram {
         rules: vec![
             GenRule {

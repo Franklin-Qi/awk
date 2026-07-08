@@ -8,11 +8,7 @@ mod diagnostics;
 mod idempotency;
 mod lex;
 mod pratt;
-#[cfg(test)]
-mod prop_tests;
 mod sexpr;
-#[cfg(test)]
-mod testing;
 #[cfg(test)]
 mod tests;
 
