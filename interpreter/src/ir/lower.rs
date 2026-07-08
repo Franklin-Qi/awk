@@ -470,22 +470,22 @@ impl<'a> CodeGen<'a> {
         args: &[Expr<'_>],
         extra: impl FnOnce(&mut CodeGen) -> T,
     ) -> (Reg, Reg, T) {
-        RegsState::new(self)
-            .scope(self, |this| {
-                let call_start = this.reg_pointer;
-                // TODO: Nicer error reporting.
-                let args_len = RegWidth::try_from(args.len()).expect("too many call args");
-                let call_end = call_start.checked_add(args_len).expect("register overflow");
+        let (state, ret) = RegsState::new(self).scope(self, |this| {
+            let call_start = this.reg_pointer;
+            // TODO: Nicer error reporting.
+            let args_len = RegWidth::try_from(args.len()).expect("too many call args");
+            let call_end = call_start.checked_add(args_len).expect("register overflow");
 
-                this.reg_pointer = call_end;
-                for (i, arg) in args.iter().enumerate() {
-                    let offset = i as RegWidth;
-                    let reg = Reg(call_start.checked_add(offset).expect("register overflow"));
-                    this.lower_expr_into(arg, reg);
-                }
-                (Reg(call_start), Reg(call_end), extra(this))
-            })
-            .1
+            this.reg_pointer = call_end;
+            for (i, arg) in args.iter().enumerate() {
+                let offset = i as RegWidth;
+                let reg = Reg(call_start.checked_add(offset).expect("register overflow"));
+                this.lower_expr_into(arg, reg);
+            }
+            (Reg(call_start), Reg(call_end), extra(this))
+        });
+        self.reg_pointer = self.reg_pointer.max(state.reg_pointer);
+        ret
     }
 
     fn spill_to_reg(&mut self, TypedArg(arg, ty): TypedArg) -> Either<Reg, LinearReg> {
