@@ -278,6 +278,10 @@ impl Interpreter<'_> {
             let record = self.symbols.record(Value::Float(0.));
             self.write_fmt(out, format_args!("{record}"));
         } else {
+            let mut range = range.iter();
+            if let Some(reg) = range.next() {
+                self.write_fmt(out, format_args!("{reg}"));
+            }
             for reg in range {
                 self.write_fmt(out, format_args!("{ofs}{reg}", ofs = self.symbols.ofs));
             }
