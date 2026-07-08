@@ -65,39 +65,24 @@ struct NamespaceState<'a> {
 
 impl Display for Ast<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        let mut state = NamespaceState { tl_ix: 0, namespace: "awk" };
+        let mut state = NamespaceState::default();
+
         for load in &self.loads {
             state.advance(f, self)?;
             writeln!(f, "@load \"{load}\"")?;
         }
-        for body in &self.begin {
-            state.advance(f, self)?;
-            write!(f, "BEGIN ")?;
-            write_body_ln(f, body, 0, state.namespace)?;
-            writeln!(f)?;
-        }
-        for body in &self.begin_file {
-            state.advance(f, self)?;
-            write!(f, "BEGINFILE ")?;
-            write_body_ln(f, body, 0, state.namespace)?;
-            writeln!(f)?;
-        }
+
+        write_special_rule(self, f, &mut state, "BEGIN", &self.begin)?;
+        write_special_rule(self, f, &mut state, "BEGINFILE", &self.begin_file)?;
+
         for rule in &self.rules {
             state.advance(f, self)?;
             rule.fmt(f, state.namespace)?;
         }
-        for body in &self.end_file {
-            state.advance(f, self)?;
-            write!(f, "ENDFILE ")?;
-            write_body_ln(f, body, 0, state.namespace)?;
-            writeln!(f)?;
-        }
-        for body in &self.end {
-            state.advance(f, self)?;
-            write!(f, "END ")?;
-            write_body_ln(f, body, 0, state.namespace)?;
-            writeln!(f)?;
-        }
+
+        write_special_rule(self, f, &mut state, "ENDFILE", &self.end_file)?;
+        write_special_rule(self, f, &mut state, "END", &self.end)?;
+
         for (i, (fun, Function { args, body })) in self.functions.iter().enumerate() {
             state.advance(f, self)?;
             fmt_seq!(
@@ -114,6 +99,20 @@ impl Display for Ast<'_> {
         }
         Ok(())
     }
+}
+
+fn write_special_rule<'a>(
+    this: &Ast<'a>,
+    f: &mut Formatter<'_>,
+    state: &mut NamespaceState<'a>,
+    lb: &str,
+    rules: &[Body<'a>],
+) -> Result {
+    for body in rules {
+        state.advance(f, this)?;
+        fmt_seq!(f, "{lb}", write_body_ln(f, body, 0, state.namespace), "\n")?;
+    }
+    Ok(())
 }
 
 impl Statement<'_> {
@@ -603,6 +602,12 @@ impl<'a> NamespaceState<'a> {
         }
         self.tl_ix += 1;
         Ok(())
+    }
+}
+
+impl Default for NamespaceState<'_> {
+    fn default() -> Self {
+        Self { tl_ix: 0, namespace: "awk" }
     }
 }
 
