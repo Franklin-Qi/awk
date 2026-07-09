@@ -40,8 +40,9 @@ fn uu_main() -> Result<()> {
     let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
     let cg = {
         let ast_arena = Bump::with_capacity(4000);
+        let code = args.code.unwrap(); // TODO: handle other forms of code input.
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
-        let ast = match parser.parse("CLI", args.code.as_encoded_bytes()) {
+        let ast = match parser.parse("CLI", code.as_encoded_bytes()) {
             Ok(ast) => ast,
             Err((report, source)) => {
                 report.eprint(("CLI", source)).unwrap();
