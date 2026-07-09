@@ -5,7 +5,7 @@
 
 use std::{ffi::OsString, path::PathBuf};
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 #[derive(Parser, Debug)]
 #[clap(version, name = "uutils AWK")]
@@ -14,7 +14,7 @@ pub struct Args {
     // POSIX
     pub code: OsString,
     #[arg(short = 'f', long)]
-    pub file: Option<PathBuf>,
+    pub file: Vec<PathBuf>,
     #[arg(short = 'F', long)]
     pub field_separator: Option<OsString>,
     #[arg(short = 'v', long, value_parser = parse_kv)]
@@ -25,23 +25,23 @@ pub struct Args {
     pub traditional: bool,
     #[arg(short = 'C', long)]
     pub copyright: bool,
-    #[arg(short = 'd', long)]
+    #[arg(short = 'd', long, num_args = 0..=1, default_missing_value = "./awkvars.out")]
     pub dump_variables: Option<PathBuf>,
-    #[arg(short = 'D', long)]
+    #[arg(short = 'D', long, num_args = 0..=1)]
     pub debug: Option<PathBuf>,
     #[arg(short = 'e', long)]
-    pub source: Vec<u8>,
+    pub source: Vec<OsString>,
     #[arg(short = 'E', long)]
     pub exec: Option<PathBuf>,
     #[arg(short = 'g', long)]
     pub gen_pot: bool,
     #[arg(short = 'i', long)]
-    pub include: Option<PathBuf>,
+    pub include: Vec<PathBuf>,
     #[arg(short = 'I', long)]
     pub trace: bool,
     #[arg(short = 'l', long)]
     pub load: Vec<OsString>,
-    #[arg(short = 'L', long)]
+    #[arg(short = 'L', long, num_args = 0..=1, default_missing_value = "")]
     pub lint: Vec<String>,
     #[arg(short = 'M', long)]
     pub bignum: bool,
@@ -51,23 +51,25 @@ pub struct Args {
     pub use_lc_numeric: bool,
     #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "./awkprof.out")]
     pub pretty_print: Option<PathBuf>,
-    #[arg(short = 'O', long, default_value_t = true)]
+    #[arg(short = 'O', long, default_value_t = true, action = ArgAction::SetTrue)]
     pub optimize: bool,
     #[arg(short = 's', long = "no-optimize")]
     pub no_optimize: bool,
-    #[arg(short = 'p', num_args = 0..=1, long)]
+    #[arg(short = 'p', long, num_args = 0..=1, default_missing_value = "./awkprof.out")]
     pub profile: Option<PathBuf>,
     #[arg(short = 'P', long)]
     pub posix: bool,
-    #[arg(short = 'r', long, default_value_t = true)]
+    #[arg(short = 'r', long, default_value_t = true, action = ArgAction::SetTrue)]
     pub re_interval: bool,
     #[arg(short = 'S', long)]
     pub sandbox: bool,
     #[arg(short = 't', long)]
     pub lint_old: bool,
+    #[arg(short = 'k', long, conflicts_with = "posix")]
+    pub csv: bool,
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
     let (k, v) = s.split_once('=').ok_or("expected key=value")?;
-    Ok((k.to_string(), v.trim_matches(['"', '\'']).to_string()))
+    Ok((k.to_string(), v.to_string()))
 }
