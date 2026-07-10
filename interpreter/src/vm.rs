@@ -195,8 +195,22 @@ impl Interpreter<'_> {
                 }
                 Instruction::And { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
                 Instruction::Or { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
-                Instruction::Matches { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
-                Instruction::MatchesNot { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
+                Instruction::Matches { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, lhs: tyl, rhs: tyr);
+                    let matched = match rhs {
+                        Value::Regex(pat) => lhs.matches_regex(pat),
+                        _ => false,
+                    };
+                    self.registers.write(dest, Value::b2f(matched));
+                }
+                Instruction::MatchesNot { dest, lhs, rhs, tyl, tyr } => {
+                    rx!(self, lhs: tyl, rhs: tyr);
+                    let matched = match rhs {
+                        Value::Regex(pat) => lhs.matches_regex(pat),
+                        _ => false,
+                    };
+                    self.registers.write(dest, Value::b2f(!matched));
+                }
                 Instruction::Add { dest, lhs, rhs, tyl, tyr } => {
                     rx!(self, dest, lhs: tyl, rhs: tyr, lhs + rhs);
                 }

@@ -20,6 +20,70 @@ fn no_args_fails_code_one() {
     ucmd().fails_with_code(1);
 }
 
+#[test]
+fn switch_default_in_middle_fallthrough() {
+    ucmd()
+        .arg("BEGIN { x = 1; switch (x) { case 1: print 1; default: print 2; case 3: print 3 } }")
+        .succeeds()
+        .stdout_only("1\n2\n3\n");
+    ucmd()
+        .arg("BEGIN { x = 2; switch (x) { case 1: print 1; default: print 2; case 3: print 3 } }")
+        .succeeds()
+        .stdout_only("2\n3\n");
+}
+
+#[test]
+fn switch_matches_integer_case_with_fallthrough() {
+    ucmd()
+        .arg("BEGIN { x = 1; switch (x) { case 1: print \"one\"; default: print \"def\" } }")
+        .succeeds()
+        .stdout_only("one\ndef\n");
+}
+
+#[test]
+fn switch_falls_through_to_default() {
+    ucmd()
+        .arg("BEGIN { x = 9; switch (x) { case 1: print 1; default: print 2 } }")
+        .succeeds()
+        .stdout_only("2\n");
+}
+
+#[test]
+fn switch_default_first_still_tests_later_cases() {
+    ucmd()
+        .arg("BEGIN { x = 3; switch (x) { default: print 2; case 3: print 3 } }")
+        .succeeds()
+        .stdout_only("3\n");
+    ucmd()
+        .arg("BEGIN { x = 4; switch (x) { default: print 2; case 3: print 3 } }")
+        .succeeds()
+        .stdout_only("2\n3\n");
+}
+
+#[test]
+fn switch_string_case_match_with_fallthrough() {
+    ucmd()
+        .arg("BEGIN { x = \"a\"; switch (x) { case \"a\": print \"match\"; default: print \"no\" } }")
+        .succeeds()
+        .stdout_only("match\nno\n");
+}
+
+#[test]
+fn switch_regex_case_match() {
+    ucmd()
+        .arg("BEGIN { x = \"abc\"; switch (x) { case /bc/: print \"match\" } }")
+        .succeeds()
+        .stdout_only("match\n");
+}
+
+#[test]
+fn switch_no_match_without_default_continues() {
+    ucmd()
+        .arg("BEGIN { x = 2; switch (x) { case 1: print 1 }; print \"done\" }")
+        .succeeds()
+        .stdout_only("done\n");
+}
+
 // Regression test for issue #5: writing to /dev/full must not panic.
 #[cfg(target_os = "linux")]
 #[test]
