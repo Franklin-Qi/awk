@@ -48,8 +48,6 @@ pub enum Instruction {
     Lt { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
     LtE { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
     GtE { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
-    And { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
-    Or { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
     Matches { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
     MatchesNot { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
     Add { dest: Reg, lhs: Arg, rhs: Arg, tyr: ArgTy, tyl: ArgTy },
@@ -155,8 +153,6 @@ impl Display for Instruction {
             | Self::Lt { dest, lhs, rhs, tyl, tyr }
             | Self::LtE { dest, lhs, rhs, tyl, tyr }
             | Self::GtE { dest, lhs, rhs, tyl, tyr }
-            | Self::And { dest, lhs, rhs, tyl, tyr }
-            | Self::Or { dest, lhs, rhs, tyl, tyr }
             | Self::Matches { dest, lhs, rhs, tyl, tyr }
             | Self::MatchesNot { dest, lhs, rhs, tyl, tyr }
             | Self::Add { dest, lhs, rhs, tyl, tyr }
@@ -230,8 +226,6 @@ impl Instruction {
             Self::Lt { .. } => "lt",
             Self::LtE { .. } => "le",
             Self::GtE { .. } => "ge",
-            Self::And { .. } => "and",
-            Self::Or { .. } => "or",
             Self::Matches { .. } => "mtch",
             Self::MatchesNot { .. } => "nmtch",
             Self::Add { .. } => "add",

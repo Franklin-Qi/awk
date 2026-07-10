@@ -84,6 +84,58 @@ fn switch_no_match_without_default_continues() {
         .stdout_only("done\n");
 }
 
+#[test]
+fn short_circuit_and_or_truth_values() {
+    ucmd()
+        .arg("BEGIN { print (0 && 1); print (1 && 2); print (1 || 0); print (0 || 5) }")
+        .succeeds()
+        .stdout_only("0\n1\n1\n1\n");
+}
+
+#[test]
+fn short_circuit_and_in_if_condition() {
+    ucmd()
+        .arg("BEGIN { if (1 && 0) print 1; else print 0 }")
+        .succeeds()
+        .stdout_only("0\n");
+}
+
+#[test]
+fn short_circuit_or_in_if_condition() {
+    ucmd()
+        .arg("BEGIN { if (1 || 0) print 1; else print 0 }")
+        .succeeds()
+        .stdout_only("1\n");
+}
+
+#[test]
+fn short_circuit_chained_and() {
+    ucmd()
+        .arg("BEGIN { a=1; b=1; c=3; print (a && b && c == 3) }")
+        .succeeds()
+        .stdout_only("1\n");
+    ucmd()
+        .arg("BEGIN { a=1; b=0; c=3; print (a && b && c == 3) }")
+        .succeeds()
+        .stdout_only("0\n");
+}
+
+#[test]
+fn short_circuit_and_skips_rhs_side_effects() {
+    ucmd()
+        .arg("BEGIN { i=0; print (0 && ++i); print i }")
+        .succeeds()
+        .stdout_only("0\n0\n");
+}
+
+#[test]
+fn short_circuit_or_skips_rhs_side_effects() {
+    ucmd()
+        .arg("BEGIN { i=0; print (1 || ++i); print i }")
+        .succeeds()
+        .stdout_only("1\n0\n");
+}
+
 // Regression test for issue #5: writing to /dev/full must not panic.
 #[cfg(target_os = "linux")]
 #[test]

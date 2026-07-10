@@ -199,8 +199,6 @@ impl Interpreter<'_> {
                 Instruction::GtE { dest, lhs, rhs, tyl, tyr } => {
                     rx!(self, dest, lhs: tyl, rhs: tyr, Value::b2f(lhs >= rhs));
                 }
-                Instruction::And { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
-                Instruction::Or { dest: _, lhs: _, rhs: _, tyr: _, tyl: _ } => todo!(),
                 Instruction::Matches { dest, lhs, rhs, tyl, tyr } => {
                     rx!(self, lhs: tyl, rhs: tyr);
                     let matched = match rhs {

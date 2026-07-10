@@ -349,18 +349,22 @@ impl<'a> CodeGen<'a> {
                         .emit(Instruction::from_unary(*op, dest, src.to_arg()));
                     src.free(self);
                 }
-                ExprNode::BinaryOperation(op, lhs, rhs) => {
-                    let lhs = self.lower_expr(lhs);
-                    let rhs = self.lower_expr(rhs);
-                    self.bc.emit(Instruction::from_binary(
-                        *op,
-                        dest,
-                        lhs.to_arg(),
-                        rhs.to_arg(),
-                    ));
-                    lhs.free(self);
-                    rhs.free(self);
-                }
+                ExprNode::BinaryOperation(op, lhs, rhs) => match op {
+                    BinaryOperator::And => self.lower_and_into(lhs, rhs, dest),
+                    BinaryOperator::Or => self.lower_or_into(lhs, rhs, dest),
+                    _ => {
+                        let lhs = self.lower_expr(lhs);
+                        let rhs = self.lower_expr(rhs);
+                        self.bc.emit(Instruction::from_binary(
+                            *op,
+                            dest,
+                            lhs.to_arg(),
+                            rhs.to_arg(),
+                        ));
+                        lhs.free(self);
+                        rhs.free(self);
+                    }
+                },
                 ExprNode::Ternary(condition, true_then, false_then) => {
                     let (if_label, state) = self.emit_branch(condition, |this| {
                         RegsState::new(this)
@@ -516,6 +520,44 @@ impl<'a> CodeGen<'a> {
             }
             Place::ChainedIndex(_, _) => todo!(),
         }
+    }
+
+    fn lower_and_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
+        let (if_label, _) = self.emit_branch(lhs, |this| {
+            let rhs_reg = this.alloc_reg();
+            this.lower_expr_into(rhs, *rhs_reg);
+            this.truthify(*rhs_reg, dest);
+            this.free_reg(rhs_reg);
+        });
+        self.bc.nth(if_label).push_end_label();
+        self.emit_jump(|this| {
+            this.bc
+                .emit(Instruction::Copy { dest, arg: Arg { imm: 0 }, ty: ArgTy::Imm });
+        });
+    }
+
+    fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
+        let (if_label, _) = self.emit_branch(lhs, |this| {
+            this.bc
+                .emit(Instruction::Copy { dest, arg: Arg { imm: 1 }, ty: ArgTy::Imm });
+        });
+        self.bc.nth(if_label).push_end_label();
+        self.emit_jump(|this| {
+            let rhs_reg = this.alloc_reg();
+            this.lower_expr_into(rhs, *rhs_reg);
+            this.truthify(*rhs_reg, dest);
+            this.free_reg(rhs_reg);
+        });
+    }
+
+    /// Coerce `src` to an integer truth value (0 or 1), as gawk does via `mkbool()`.
+    fn truthify(&mut self, src: Reg, dest: Reg) {
+        let tmp = self.alloc_reg();
+        self.bc
+            .emit(Instruction::Negation { dest: *tmp, arg: Arg { reg: src }, ty: ArgTy::Reg });
+        self.bc
+            .emit(Instruction::Negation { dest, arg: Arg { reg: *tmp }, ty: ArgTy::Reg });
+        self.free_reg(tmp);
     }
 
     fn emit_branch<T>(
@@ -723,8 +765,9 @@ impl Instruction {
             BinaryOperator::Lt => Self::Lt { dest, lhs, rhs, tyl, tyr },
             BinaryOperator::LtE => Self::LtE { dest, lhs, rhs, tyl, tyr },
             BinaryOperator::GtE => Self::GtE { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::And => Self::And { dest, lhs, rhs, tyl, tyr },
-            BinaryOperator::Or => Self::Or { dest, lhs, rhs, tyl, tyr },
+            BinaryOperator::And | BinaryOperator::Or => {
+                unreachable!("&& and || are lowered with branches")
+            }
             BinaryOperator::Matches => Self::Matches { dest, lhs, rhs, tyl, tyr },
             BinaryOperator::MatchesNot => Self::MatchesNot { dest, lhs, rhs, tyl, tyr },
             BinaryOperator::Add => Self::Add { dest, lhs, rhs, tyl, tyr },
@@ -870,6 +913,30 @@ mod tests {
         });
     }
 
+    fn brif_count(cg: &CodeGen<'_>) -> usize {
+        cg.bc
+            .code
+            .iter()
+            .filter(|i| matches!(i, Instruction::Branch { .. }))
+            .count()
+    }
+
+    #[test]
+    fn and_or_use_branches_not_dedicated_ops() {
+        with_lower("BEGIN { print (0 && 1); print (1 || 0) }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(
+                !bc.contains(" <- and "),
+                "unexpected And instruction:\n{bc}"
+            );
+            assert!(!bc.contains(" <- or "), "unexpected Or instruction:\n{bc}");
+            assert!(
+                bc.contains("brif"),
+                "expected short-circuit branches:\n{bc}"
+            );
+        });
+    }
+
     #[test]
     fn switch_default_in_middle_uses_no_match_jump_only() {
         with_lower(
@@ -898,6 +965,15 @@ mod tests {
                 bc.contains(" <- mtch "),
                 "expected Matches for typed regex case:\n{bc}"
             );
+        });
+    }
+
+    #[test]
+    fn chained_and_lowers_one_branch_per_operator() {
+        let mut single = 0;
+        with_lower("BEGIN { print (0 && 1) }", |cg| single = brif_count(cg));
+        with_lower("BEGIN { print (0 && 1 && 2) }", |cg| {
+            assert_eq!(brif_count(cg), single + 1, "each && should add one branch");
         });
     }
 
@@ -935,6 +1011,15 @@ mod tests {
                 "scrutinee should be evaluated once:\n{}",
                 cg.bc
             );
+        });
+    }
+
+    #[test]
+    fn chained_or_lowers_one_branch_per_operator() {
+        let mut single = 0;
+        with_lower("BEGIN { print (1 || 0) }", |cg| single = brif_count(cg));
+        with_lower("BEGIN { print (1 || 0 || 2) }", |cg| {
+            assert_eq!(brif_count(cg), single + 1, "each || should add one branch");
         });
     }
 }
