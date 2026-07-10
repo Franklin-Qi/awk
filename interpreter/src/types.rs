@@ -77,6 +77,22 @@ impl Value<'_> {
         Self::Float(b as usize as f64)
     }
 
+    // FIXME: gawk supports regex extensions beyond the `regex` crate; compile patterns
+    // once and route matching through a dedicated layer (likely regex-automata).
+    pub(crate) fn matches_regex(&self, pattern: &[u8]) -> bool {
+        let mut subject = Vec::with_capacity(self.string_size_hint());
+        self.write_string(&mut subject);
+        let Ok(subject) = str::from_utf8(&subject) else {
+            return false;
+        };
+        let Ok(pattern) = str::from_utf8(pattern) else {
+            return false;
+        };
+        regex::Regex::new(pattern)
+            .ok()
+            .is_some_and(|re| re.is_match(subject))
+    }
+
     pub fn write_string(&self, f: &mut Vec<u8>) {
         match self {
             Self::String(s) | Self::Regex(s) => f.extend_from_slice(s),

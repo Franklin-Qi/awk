@@ -577,6 +577,7 @@ dependencies = [
  "indexmap-allocator-api",
  "memchr",
  "parser",
+ "regex",
  "thiserror",
  "tracing",
 ]

@@ -185,8 +185,95 @@ impl<'a> CodeGen<'a> {
                 self.bc
                     .emit(Instruction::OutputCall { start, end, cmd: *name, redir });
             }
+            Statement::Switch { scrutinee, branches, default } => {
+                self.lower_switch(scrutinee, branches, default.as_ref());
+            }
             _ => todo!(),
         }
+    }
+
+    fn lower_switch(
+        &mut self,
+        scrutinee: &Expr<'_>,
+        branches: &[(Atom<'_>, Body<'_>)],
+        default: Option<&(Body<'_>, usize)>,
+    ) {
+        let scr = self.alloc_reg();
+        self.lower_expr_into(scrutinee, *scr);
+        let cmp = self.alloc_reg();
+
+        let default_pos = default.map_or(branches.len(), |(_, pos)| *pos);
+        let mut pending_branches = Vec::new_in(self.arena);
+        for (i, (atom, _)) in branches.iter().enumerate() {
+            pending_branches.push(self.emit_switch_case_match(*scr, *cmp, atom, i));
+        }
+        let no_match_jump = self.bc.emit(Instruction::Jump { to: Label(0) });
+
+        let mut case_labels = Vec::with_capacity_in(branches.len(), self.arena);
+        case_labels.resize(branches.len(), Label(0));
+
+        for (i, (_, body)) in branches.iter().enumerate().take(default_pos) {
+            case_labels[i] = Label(self.bc.len());
+            self.lower_body(body);
+        }
+
+        let default_label = if let Some((body, _)) = default {
+            let label = Label(self.bc.len());
+            self.lower_body(body);
+            Some(label)
+        } else {
+            None
+        };
+
+        for (i, (_, body)) in branches.iter().enumerate().skip(default_pos) {
+            case_labels[i] = Label(self.bc.len());
+            self.lower_body(body);
+        }
+
+        let end_switch = self.following_instr(0);
+
+        for (br_label, case_ix) in pending_branches {
+            self.bc.nth(br_label).set_then_label(case_labels[case_ix]);
+        }
+
+        let no_match_target = default_label.unwrap_or(end_switch);
+        self.bc.nth(no_match_jump).set_label(no_match_target);
+        self.free_reg(cmp);
+        self.free_reg(scr);
+    }
+
+    fn emit_switch_case_match(
+        &mut self,
+        scr: Reg,
+        cmp: Reg,
+        case: &Atom<'_>,
+        case_ix: usize,
+    ) -> (Label, usize) {
+        let lhs = TypedArg::from(scr);
+        let tyl = ArgTy::Reg;
+
+        match case {
+            Atom::Regex(r) | Atom::TypedRegex(r) => {
+                let buf = &*self.arena.alloc_slice_copy(r.as_ref());
+                let TypedArg(rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into()));
+                self.bc
+                    .emit(Instruction::Matches { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
+            }
+            atom => {
+                let case_val = self.lower_atom(atom);
+                let TypedArg(rhs, tyr) = case_val.to_arg();
+                self.bc
+                    .emit(Instruction::Eq { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
+                case_val.free(self);
+            }
+        }
+
+        let br_label = self.bc.emit(Instruction::Branch {
+            condition: cmp,
+            then_label: Label(0),
+            else_label: self.following_instr(1),
+        });
+        (br_label, case_ix)
     }
 
     fn lower_expr(&mut self, expr: &Expr) -> Operand {
@@ -734,5 +821,120 @@ impl From<&LinearReg> for Reg {
 impl From<&Self> for Reg {
     fn from(value: &Self) -> Self {
         *value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bumpalo::Bump;
+    use parser::Parser;
+
+    fn with_lower(source: &str, f: impl FnOnce(&CodeGen<'_>)) {
+        let arena = Bump::new();
+        let mut parser = Parser::new(&arena, false);
+        let ast = parser.parse("test", source.as_bytes()).expect("parse");
+        let mut cg = CodeGen::new(&arena);
+        cg.lower_ast(ast);
+        f(&cg);
+    }
+
+    #[test]
+    fn switch_lowers_case_comparisons() {
+        with_lower(
+            "BEGIN { switch (x) { case 1: print; case \"a\": print 2; default: print 3 } }",
+            |cg| {
+                let bc = format!("{}", cg.bc);
+                assert!(
+                    bc.contains(" <- eq "),
+                    "expected Eq for literal cases:\n{bc}"
+                );
+                assert!(bc.contains("brif"), "expected case branches:\n{bc}");
+                assert!(bc.contains("jmp"), "expected jumps to end of switch:\n{bc}");
+            },
+        );
+    }
+
+    #[test]
+    fn switch_lowers_regex_case_with_matches() {
+        with_lower("BEGIN { switch (x) { case /pat/: print } }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(
+                bc.contains(" <- mtch "),
+                "expected Matches for regex case:\n{bc}"
+            );
+            assert!(
+                !bc.contains(" <- eq "),
+                "regex case should not use Eq:\n{bc}"
+            );
+        });
+    }
+
+    #[test]
+    fn switch_default_in_middle_uses_no_match_jump_only() {
+        with_lower(
+            "BEGIN { switch (x) { case 1: print 1; default: print 2; case 3: print 3 } }",
+            |cg| {
+                let jmp_count = cg
+                    .bc
+                    .code
+                    .iter()
+                    .filter(|i| matches!(i, Instruction::Jump { .. }))
+                    .count();
+                assert_eq!(
+                    jmp_count, 1,
+                    "expected a single no-match jump, not per-case exits:\n{}",
+                    cg.bc
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn switch_typed_regex_case_uses_matches() {
+        with_lower("BEGIN { switch (x) { case @/pat/: print } }", |cg| {
+            let bc = format!("{}", cg.bc);
+            assert!(
+                bc.contains(" <- mtch "),
+                "expected Matches for typed regex case:\n{bc}"
+            );
+        });
+    }
+
+    #[test]
+    fn switch_no_exit_jumps_between_case_bodies() {
+        with_lower(
+            "BEGIN { switch (1) { case 1: print; default: print 2 } }",
+            |cg| {
+                let jmp_count = cg
+                    .bc
+                    .code
+                    .iter()
+                    .filter(|i| matches!(i, Instruction::Jump { .. }))
+                    .count();
+                assert_eq!(
+                    jmp_count, 1,
+                    "gawk switch fallthrough should not emit per-case exit jumps:\n{}",
+                    cg.bc
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn switch_scrutinee_expression_is_evaluated_once() {
+        with_lower("BEGIN { switch (1 + 1) { case 2: print } }", |cg| {
+            let add_count = cg
+                .bc
+                .code
+                .iter()
+                .filter(|i| matches!(i, Instruction::Add { .. }))
+                .count();
+            assert_eq!(
+                add_count, 1,
+                "scrutinee should be evaluated once:\n{}",
+                cg.bc
+            );
+        });
     }
 }

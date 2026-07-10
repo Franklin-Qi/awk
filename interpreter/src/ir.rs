@@ -111,6 +111,14 @@ impl Instruction {
         }
     }
 
+    fn set_then_label(&mut self, label: Label) {
+        if let Self::Branch { then_label, else_label: _, condition: _ } = self {
+            *then_label = label;
+        } else {
+            debug_assert!(false, "Incorrect label set!");
+        }
+    }
+
     fn push_end_label(&mut self) {
         if let Self::Branch { else_label, then_label: _, condition: _ } = self {
             else_label.0 += 1;
