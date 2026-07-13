@@ -34,12 +34,19 @@ pub enum ExecMode {
 
 pub struct Interpreter<'a> {
     arena: &'a Bump,
-    bc: Bytecode<'a>,
     program_counter: usize,
     registers: Registers<'a>,
     symbols: SymbolTable<'a>,
     consts: Consts<'a>,
     compat: ExecMode,
+}
+
+pub enum Signal {
+    Return,
+    Next,
+    NextFile,
+    Exit,
+    End,
 }
 
 #[derive(Debug)]
@@ -63,8 +70,7 @@ impl<'a> Interpreter<'a> {
         let n_regs = code.reg_pointer as usize + 1;
         Self {
             arena: code.arena,
-            program_counter: code.bc.begin_label.0 as _,
-            bc: code.bc,
+            program_counter: 0,
             registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; n_regs]),
             symbols: code.symbols,
             consts: code.consts,
@@ -134,7 +140,7 @@ impl<'a> Consts<'a> {
 }
 
 impl Interpreter<'_> {
-    pub fn run(&mut self) {
+    pub fn run_chunk(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
         macro_rules! rx {
             ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
                 rx!($self, $src: $ty);
@@ -162,7 +168,7 @@ impl Interpreter<'_> {
                 $self.registers.write($dest, $e);
             }};
         }
-        while let Some(&instr) = self.bc.code.get(self.program_counter) {
+        while let Some(&instr) = bytecode.get(self.program_counter) {
             match instr {
                 Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
                 Instruction::Negation { dest, arg, ty } => {
@@ -254,7 +260,7 @@ impl Interpreter<'_> {
                     self.program_counter = label as _;
                     continue;
                 }
-                Instruction::Return { arg: _, ty: _ } => todo!(),
+                Instruction::Return { arg: _, ty: _ } => return Ok(Signal::Return),
                 Instruction::Branch { then_label, else_label, condition } => {
                     if self.registers.get(condition).to_bool() {
                         self.program_counter = then_label.0 as _;
@@ -266,6 +272,7 @@ impl Interpreter<'_> {
             }
             self.program_counter += 1;
         }
+        Ok(Signal::End)
     }
 
     fn intrinsic_print(&mut self, start: Reg, end: Reg, fun: Command, redir: Option<Redirection>) {
@@ -322,7 +329,6 @@ impl<'a> Registers<'a> {
 
 impl Display for Interpreter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}\n", self.bc)?;
         writeln!(f, "{}\n", self.registers)?;
         writeln!(f, "{}\n", self.symbols)?;
         write!(f, "{}", self.consts)

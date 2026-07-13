@@ -38,7 +38,7 @@ fn uu_main() -> Result<()> {
     };
 
     let rt_arena = Bump::with_capacity(4000); // 4KB minus metadata-ish
-    let cg = {
+    let mut cg = {
         let ast_arena = Bump::with_capacity(4000);
         let code = args.code.unwrap(); // TODO: handle other forms of code input.
         let mut parser = Parser::new(&ast_arena, args.pretty_print.is_some());
@@ -63,7 +63,10 @@ fn uu_main() -> Result<()> {
         todo!()
     }
 
-    Interpreter::new(ExecMode::Uu, cg).run();
+    let bc = cg.bytecode();
+    let mut intrp = Interpreter::new(ExecMode::Uu, cg);
+
+    intrp.run_chunk(bc.begin_code()).unwrap();
 
     Ok(())
 }

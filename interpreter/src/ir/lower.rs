@@ -47,7 +47,7 @@ impl<'a> CodeGen<'a> {
     pub fn new(arena: &'a Bump) -> Self {
         Self {
             arena,
-            bc: Bytecode::new_in(arena),
+            bc: Bytecode::with_capacity_in(64, arena),
             consts: Consts(IndexSet::new_in(arena)),
             symbols: SymbolTable::new_in(arena),
             free_regs: Vec::new_in(arena),
@@ -509,16 +509,19 @@ impl<'a> CodeGen<'a> {
     fn following_instr(&self, nth: IxWidth) -> Label {
         Label(self.bc.len() + nth)
     }
+
+    pub fn bytecode(&mut self) -> Bytecode<'a> {
+        std::mem::replace(&mut self.bc, Bytecode::with_capacity_in(0, self.arena))
+    }
 }
 
-#[derive(Clone)]
 pub struct Bytecode<'a> {
-    pub code: Vec<'a, Instruction>,
-    pub begin_label: Label,
-    pub begin_file_label: Label,
-    pub end_file_label: Label,
-    pub end_label: Label,
-    pub records_label: Label,
+    pub(crate) code: Vec<'a, Instruction>,
+    pub(crate) begin_label: Label,
+    pub(crate) begin_file_label: Label,
+    pub(crate) end_file_label: Label,
+    pub(crate) end_label: Label,
+    pub(crate) records_label: Label,
 }
 
 #[derive(Clone, Debug)]
@@ -528,9 +531,9 @@ struct RegsState {
 }
 
 impl<'a> Bytecode<'a> {
-    fn new_in(bump: &'a Bump) -> Self {
+    fn with_capacity_in(cap: usize, arena: &'a Bump) -> Self {
         Self {
-            code: Vec::with_capacity_in(64, bump),
+            code: Vec::with_capacity_in(cap, arena),
             begin_label: Label(0),
             begin_file_label: Label(0),
             end_file_label: Label(0),
@@ -551,6 +554,26 @@ impl<'a> Bytecode<'a> {
 
     fn nth(&mut self, label: Label) -> &mut Instruction {
         &mut self.code[label.0 as usize]
+    }
+
+    pub fn begin_code(&self) -> &[Instruction] {
+        &self.code[self.begin_label.0 as _..self.begin_file_label.0 as _]
+    }
+
+    pub fn begin_file_code(&self) -> &[Instruction] {
+        &self.code[self.begin_file_label.0 as _..self.end_file_label.0 as _]
+    }
+
+    pub fn end_file_code(&self) -> &[Instruction] {
+        &self.code[self.end_file_label.0 as _..self.end_label.0 as _]
+    }
+
+    pub fn end_code(&self) -> &[Instruction] {
+        &self.code[self.end_label.0 as _..self.records_label.0 as _]
+    }
+
+    pub fn records_code(&self) -> &[Instruction] {
+        &self.code[self.records_label.0 as _..]
     }
 }
 
