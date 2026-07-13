@@ -36,6 +36,7 @@ derive_more = { version = "2.1.1", features = ["from", "debug", "display"] }
 regex = "1.12.3"
 
 [dependencies]
+lexer.workspace = true
 interpreter.workspace = true
 parser.workspace = true
 color-eyre.workspace = true

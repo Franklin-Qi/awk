@@ -3,9 +3,22 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{convert::Infallible, ffi::OsString, path::PathBuf};
+#![allow(dead_code)]
 
-use clap::{ArgAction, Parser, ValueEnum};
+use std::{
+    convert::Infallible,
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+};
+
+use bumpalo::Bump;
+use clap::{
+    ArgAction, Error, Parser, ValueEnum,
+    builder::{TypedValueParser, ValueParserFactory},
+    error::ErrorKind,
+};
+use lexer::{Identifier, Token};
+use memchr::memchr;
 
 #[derive(Parser, Debug)]
 #[clap(version, name = "uutils AWK")]
@@ -13,14 +26,14 @@ use clap::{ArgAction, Parser, ValueEnum};
 pub struct Args {
     #[arg(required_unless_present_any = ["file", "source"])]
     pub code: Option<OsString>,
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_parser = parse_kv)]
-    pub operands: Vec<(String, String)>,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub read_queue: Vec<ArgQueueItem>,
     #[arg(short = 'f', long)]
     pub file: Vec<PathBuf>,
     #[arg(short = 'F', long)]
     pub field_separator: Option<OsString>,
-    #[arg(short = 'v', long, value_parser = parse_kv)]
-    pub assign: Vec<(String, String)>,
+    #[arg(short = 'v', long)]
+    pub assign: Vec<KeyValue>,
     #[arg(short = 'b', long)]
     pub characters_as_bytes: bool,
     #[arg(short = 'c', long)]
@@ -87,6 +100,13 @@ pub struct Args {
     pub csv: bool,
 }
 
+#[derive(Clone, Debug)]
+pub enum ArgQueueItem {
+    File(PathBuf),
+    Assignment(KeyValue),
+    Stdio,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum LintMode {
     Basic,
@@ -111,7 +131,106 @@ fn parse_debug_mode(s: &str) -> Result<DebugMode, Infallible> {
     }
 }
 
-fn parse_kv(s: &str) -> Result<(String, String), String> {
-    let (k, v) = s.split_once('=').ok_or("expected key=value")?;
-    Ok((k.to_string(), v.to_string()))
+#[derive(Clone, Debug)]
+pub struct KeyValue {
+    namespace: String,
+    ident: String,
+    value: OsString,
+}
+
+impl KeyValue {
+    fn parse_from(value: &OsStr) -> Result<Self, Error> {
+        // TODO: move to ariadne.
+        let err = |msg| Err(Error::raw(ErrorKind::InvalidValue, msg));
+        let bytes = value.as_encoded_bytes();
+        let Some(del) = memchr(b'=', bytes) else {
+            return err("Expected `key=value`");
+        };
+        let (k, value) = bytes.split_at(del);
+
+        // SAFETY: `=` is a valid char boundary; encoded bytes are also valid.
+        let value = unsafe { OsString::from_encoded_bytes_unchecked(value[1..].to_vec()) };
+        let tmp_arena = Bump::with_capacity(32);
+        let mut lex = Token::lex(k, &tmp_arena, false, false);
+        let Some(Ok(Token::Identifier(Identifier { literal }))) = lex.next() else {
+            return err("Invalid identifier");
+        };
+
+        let kv = match lex.next() {
+            None => Self {
+                namespace: "awk".to_string(),
+                ident: literal.to_string(),
+                value,
+            },
+            Some(Ok(Token::PathSpec))
+                if let Some(Ok(Token::Identifier(Identifier { literal: ident }))) = lex.next() =>
+            {
+                Self {
+                    namespace: literal.to_string(),
+                    ident: ident.to_string(),
+                    value,
+                }
+            }
+            _ => return err("Invalid identifier"),
+        };
+
+        let None = lex.next() else {
+            return err("Expected `key=value`");
+        };
+        Ok(kv)
+    }
+}
+
+impl TypedValueParser for KeyValueFactory {
+    type Value = KeyValue;
+
+    fn parse_ref(
+        &self,
+        _cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &OsStr,
+    ) -> Result<Self::Value, Error> {
+        KeyValue::parse_from(value)
+    }
+}
+
+impl TypedValueParser for ArgQueueItemFactory {
+    type Value = ArgQueueItem;
+
+    fn parse_ref(
+        &self,
+        _cmd: &clap::Command,
+        _arg: Option<&clap::Arg>,
+        value: &OsStr,
+    ) -> Result<Self::Value, Error> {
+        if value == OsStr::new("-") {
+            Ok(ArgQueueItem::Stdio)
+        } else if let Ok(key_val) = KeyValue::parse_from(value) {
+            Ok(ArgQueueItem::Assignment(key_val))
+        } else {
+            Ok(ArgQueueItem::File(PathBuf::from(value)))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ArgQueueItemFactory;
+
+impl ValueParserFactory for ArgQueueItem {
+    type Parser = ArgQueueItemFactory;
+
+    fn value_parser() -> Self::Parser {
+        ArgQueueItemFactory
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KeyValueFactory;
+
+impl ValueParserFactory for KeyValue {
+    type Parser = KeyValueFactory;
+
+    fn value_parser() -> Self::Parser {
+        KeyValueFactory
+    }
 }

@@ -17,7 +17,7 @@ use interpreter::{CodeGen, ExecMode, Interpreter};
 use parser::Parser;
 
 use crate::{
-    cli::Args,
+    cli::{Args, KeyValue},
     utils::{ensure_consistent_panic, exit_err},
 };
 
@@ -59,7 +59,7 @@ fn uu_main() -> Result<()> {
         cg
     };
 
-    for (_k, _v) in args.assign {
+    for KeyValue { .. } in args.assign {
         todo!()
     }
 
