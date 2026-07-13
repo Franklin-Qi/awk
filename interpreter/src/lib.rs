@@ -9,7 +9,7 @@ mod types;
 mod vm;
 
 pub use ir::lower::CodeGen;
-pub use vm::{ExecMode, Interpreter};
+pub use vm::{ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]

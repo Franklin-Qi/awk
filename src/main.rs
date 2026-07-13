@@ -8,12 +8,16 @@
 mod cli;
 mod utils;
 
-use std::{env::args_os, fs};
+use std::{
+    env::args_os,
+    fs,
+    io::{self, Write, stdout},
+};
 
 use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
-use interpreter::{CodeGen, ExecMode, Interpreter};
+use interpreter::{CodeGen, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 use parser::Parser;
 
 use crate::{
@@ -66,7 +70,26 @@ fn uu_main() -> Result<()> {
     let bc = cg.bytecode();
     let mut intrp = Interpreter::new(ExecMode::Uu, cg);
 
-    intrp.run_chunk(bc.begin_code()).unwrap();
+    // Small event loop to drive begin blocks for testing purposes.
+    // To be refactored into an I/O runtime.
+    let code = bc.begin_code();
+    let mut sig = intrp.run_chunk(code)?;
+    loop {
+        let req = match sig {
+            Signal::Suspend(req) => req,
+            Signal::End => break,
+            _ => todo!(),
+        };
+        let res = perform_io(&req);
+        sig = intrp.resume(code, req, res)?;
+    }
 
     Ok(())
+}
+
+/// Small shim to test I/O. To be refactored/removed.
+fn perform_io(req: &IoRequest) -> io::Result<IoResponse> {
+    match req {
+        IoRequest::WriteStdout(buf) => stdout().lock().write_all(buf).map(|_| IoResponse::Empty),
+    }
 }

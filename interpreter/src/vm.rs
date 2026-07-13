@@ -47,6 +47,15 @@ pub enum Signal {
     NextFile,
     Exit,
     End,
+    Suspend(IoRequest),
+}
+
+pub enum IoRequest {
+    WriteStdout(StdVec<u8>),
+}
+
+pub enum IoResponse {
+    Empty,
 }
 
 #[derive(Debug)]
@@ -264,7 +273,7 @@ impl Interpreter<'_> {
                 } => todo!(),
                 Instruction::IntrinsicCall { dest: _, start: _, end: _, name: _ } => todo!(),
                 Instruction::OutputCall { start, end, cmd, redir } => {
-                    self.intrinsic_print(start, end, cmd, redir);
+                    return Ok(Signal::Suspend(self.print_req(start, end, cmd, redir)));
                 }
                 Instruction::UserCall { dest: _, start: _, end: _, name: _ } => todo!(),
                 Instruction::IndirectCall { dest: _, start: _, end: _, name: _, ty: _ } => todo!(),
@@ -287,36 +296,49 @@ impl Interpreter<'_> {
         Ok(Signal::End)
     }
 
-    fn intrinsic_print(&mut self, start: Reg, end: Reg, fun: Command, redir: Option<Redirection>) {
+    /// Resumes execution from a suspend/yield point. Receives the request
+    /// since we might need to uniquely identify it (with pipes, for instance).
+    /// Also takes the response in a [`io::Result`] because AWK has error
+    /// recovery mechanisms (ERRNO variable, etc.).
+    ///
+    /// Allows us to trivially drive multiple code blocks concurrently.
+    pub fn resume(
+        &mut self,
+        bytecode: &[Instruction],
+        _req: IoRequest,
+        _res: io::Result<IoResponse>,
+    ) -> io::Result<Signal> {
+        self.program_counter += 1;
+        self.run_chunk(bytecode)
+    }
+
+    fn print_req(
+        &mut self,
+        start: Reg,
+        end: Reg,
+        fun: Command,
+        redir: Option<Redirection>,
+    ) -> IoRequest {
         let Command::Print = fun else { todo!() };
         let None = redir else { todo!() };
-        let out = &mut io::stdout().lock();
+        let mut buf = StdVec::with_capacity(64);
         let range = self.registers.get_range(start..end);
 
         if range.is_empty() {
             let record = self.symbols.record(Value::Float(0.));
-            self.write_fmt(out, format_args!("{record}"));
+            let _ = write!(buf, "{record}");
         } else {
             let mut range = range.iter();
             if let Some(reg) = range.next() {
-                self.write_fmt(out, format_args!("{reg}"));
+                let _ = write!(buf, "{reg}");
             }
             for reg in range {
-                self.write_fmt(out, format_args!("{ofs}{reg}", ofs = self.symbols.ofs));
+                let _ = write!(buf, "{ofs}{reg}", ofs = self.symbols.ofs);
             }
         }
-        self.write_fmt(out, format_args!("{rfs}", rfs = self.symbols.rfs));
-    }
+        let _ = write!(buf, "{rfs}", rfs = self.symbols.rfs);
 
-    fn write_fmt(&self, out: &mut impl Write, args: fmt::Arguments<'_>) {
-        if let Err(e) = out.write_fmt(args)
-            && e.kind() != io::ErrorKind::BrokenPipe
-        {
-            let _ = write!(
-                io::stderr().lock(),
-                "awk: warning: error writing to standard output: {e}"
-            );
-        }
+        IoRequest::WriteStdout(buf)
     }
 }
 
