@@ -800,8 +800,14 @@ impl Deref for LinearReg {
 }
 
 fn var_index(var: &Variable<'_>) -> NonLocal {
-    // SAFETY: it is repr(RegWidth).
-    unsafe { *<*const Variable>::from(var).cast::<NonLocal>() }
+    const { assert!(size_of::<(IxWidth, Identifier<'_>)>() == size_of::<Variable>()) }
+    const { assert!(align_of::<(IxWidth, Identifier<'_>)>() == align_of::<Variable>()) }
+
+    // SAFETY: The discriminant is repr(IxWidth).
+    let index = unsafe { *(&raw const *var).cast::<IxWidth>() };
+    debug_assert_ne!(index, 0); // User variable.
+
+    NonLocal(index)
 }
 
 #[cfg(debug_assertions)]

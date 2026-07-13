@@ -64,10 +64,10 @@ pub struct Identifier<'a> {
     pub literal: &'a str,
 }
 
-#[repr(u16)]
+#[repr(u32)]
 #[derive(Clone, Copy)]
 pub enum Variable<'a> {
-    User(Identifier<'a>),
+    User(Identifier<'a>) = 0,
     Nr,
     Nf,
     Fs,
