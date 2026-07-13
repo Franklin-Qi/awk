@@ -128,9 +128,7 @@ impl Statement<'_> {
                     write_body(f, then_body, indent, namespace),
                     opt(else_body, |f, else_body| {
                         write!(f, " else ")?;
-                        if let [nest @ Statement::If { condition: _, then_body: _, else_body: _ }] =
-                            else_body.0.as_slice()
-                        {
+                        if let [nest @ Statement::If { .. }] = else_body.0.as_slice() {
                             nest.fmt(f, indent, namespace)
                         } else {
                             write_body(f, else_body, indent, namespace)
