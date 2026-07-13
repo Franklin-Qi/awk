@@ -77,9 +77,9 @@ pub struct Args {
          help = "[default value, if empty: `./awkprof.out`]"
      )]
     pub pretty_print: Option<PathBuf>,
-    #[arg(short = 'O', long, default_value_t = true, action = ArgAction::SetTrue)]
+    #[arg(short = 'O', long, default_value_t = true, action = ArgAction::SetTrue, overrides_with = "no_optimize")]
     pub optimize: bool,
-    #[arg(short = 's', long = "no-optimize")]
+    #[arg(short = 's', long = "no-optimize", action = ArgAction::SetTrue, overrides_with = "optimize")]
     pub no_optimize: bool,
     #[arg(short = 'p',
         long,
