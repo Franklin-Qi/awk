@@ -95,14 +95,17 @@ impl<'a> CodeGen<'a> {
             self.lower_body(actions);
         } else {
             let reg = self.alloc_reg();
-            self.bc
-                .emit(Instruction::Record { dest: *reg, arg: Arg { imm: 0 }, ty: ArgTy::Imm });
+
+            let TypedArg(arg, ty) = TypedArg::new_imm(0);
+            self.bc.emit(Instruction::Record { dest: *reg, arg, ty });
+
             self.bc.emit(Instruction::OutputCall {
                 start: *reg,
                 end: Reg((*reg).0 + 1),
                 cmd: Command::Print,
                 redir: None,
             });
+
             self.free_reg(reg);
         }
     }
@@ -195,19 +198,23 @@ impl<'a> CodeGen<'a> {
             Statement::Exit(Some(expr)) => {
                 let dest = self.alloc_reg();
                 self.lower_expr_into(expr, *dest);
-                self.bc
-                    .emit(Instruction::Exit { arg: Arg { reg: *dest }, ty: ArgTy::Reg });
+
+                let TypedArg(arg, ty) = (*dest).into();
+                self.bc.emit(Instruction::Exit { arg, ty });
+
                 self.free_reg(dest);
             }
             Statement::Exit(None) => {
-                self.bc
-                    .emit(Instruction::Exit { arg: Arg { imm: 0 }, ty: ArgTy::Imm });
+                let TypedArg(arg, ty) = TypedArg::new_imm(0);
+                self.bc.emit(Instruction::Exit { arg, ty });
             }
             Statement::Return(Some(expr)) => {
                 let dest = self.alloc_reg();
                 self.lower_expr_into(expr, *dest);
-                self.bc
-                    .emit(Instruction::Return { arg: Arg { reg: *dest }, ty: ArgTy::Reg });
+
+                let TypedArg(arg, ty) = (*dest).into();
+                self.bc.emit(Instruction::Return { arg, ty });
+
                 self.free_reg(dest);
             }
             Statement::Return(None) => {
@@ -557,38 +564,37 @@ impl<'a> CodeGen<'a> {
         let (if_label, _) = self.emit_branch(lhs, |this| {
             let rhs_reg = this.alloc_reg();
             this.lower_expr_into(rhs, *rhs_reg);
-            this.truthify(*rhs_reg, dest);
+            this.truthify(dest, *rhs_reg);
             this.free_reg(rhs_reg);
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
-            this.bc
-                .emit(Instruction::Copy { dest, arg: Arg { imm: 0 }, ty: ArgTy::Imm });
+            let TypedArg(arg, ty) = TypedArg::new_imm(0);
+            this.bc.emit(Instruction::Copy { dest, arg, ty });
         });
     }
 
     fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
-            this.bc
-                .emit(Instruction::Copy { dest, arg: Arg { imm: 1 }, ty: ArgTy::Imm });
+            let TypedArg(arg, ty) = TypedArg::new_imm(1);
+            this.bc.emit(Instruction::Copy { dest, arg, ty });
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
             let rhs_reg = this.alloc_reg();
             this.lower_expr_into(rhs, *rhs_reg);
-            this.truthify(*rhs_reg, dest);
+            this.truthify(dest, *rhs_reg);
             this.free_reg(rhs_reg);
         });
     }
 
     /// Coerce `src` to an integer truth value (0 or 1), as gawk does via `mkbool()`.
-    fn truthify(&mut self, src: Reg, dest: Reg) {
-        let tmp = self.alloc_reg();
-        self.bc
-            .emit(Instruction::Negation { dest: *tmp, arg: Arg { reg: src }, ty: ArgTy::Reg });
-        self.bc
-            .emit(Instruction::Negation { dest, arg: Arg { reg: *tmp }, ty: ArgTy::Reg });
-        self.free_reg(tmp);
+    fn truthify(&mut self, dest: Reg, src: Reg) {
+        let TypedArg(arg, ty) = src.into();
+        self.bc.emit(Instruction::Negation { dest, arg, ty });
+
+        let TypedArg(arg, ty) = dest.into();
+        self.bc.emit(Instruction::Negation { dest, arg, ty });
     }
 
     fn emit_branch<T>(
