@@ -440,6 +440,7 @@ impl<'a> CodeGen<'a> {
                         }
                     }
                 }
+                ExprNode::Parenthesized(expr) => self.lower_expr_into(expr, dest),
                 _ => todo!(),
             },
         }
