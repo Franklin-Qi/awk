@@ -281,7 +281,6 @@ impl Interpreter<'_> {
                     self.program_counter = label as _;
                     continue;
                 }
-                Instruction::Return { arg: _, ty: _ } => return Ok(Signal::Return),
                 Instruction::Branch { then_label, else_label, condition } => {
                     if self.registers.get(condition).to_bool() {
                         self.program_counter = then_label.0 as _;
@@ -290,6 +289,12 @@ impl Interpreter<'_> {
                     }
                     continue;
                 }
+                // TODO resolve return/exit args.
+                Instruction::Exit { arg: _arg, ty: _ty } => return Ok(Signal::Exit),
+                Instruction::Return { arg: _, ty: _ } => return Ok(Signal::Return),
+                Instruction::ReturnUnassigned => return Ok(Signal::Return),
+                Instruction::Next => return Ok(Signal::Next),
+                Instruction::NextFile => return Ok(Signal::NextFile),
             }
             self.program_counter += 1;
         }

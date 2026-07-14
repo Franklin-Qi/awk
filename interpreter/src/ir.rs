@@ -68,8 +68,14 @@ pub enum Instruction {
     UserCall { dest: Reg, start: Reg, end: Reg, name: NonLocal },
     IndirectCall { dest: Reg, start: Reg, end: Reg, name: Arg, ty: ArgTy },
     Jump { to: Label },
-    Return { arg: Arg, ty: ArgTy },
     Branch { then_label: Label, else_label: Label, condition: Reg },
+
+    // Traps
+    Exit { arg: Arg, ty: ArgTy },
+    Return { arg: Arg, ty: ArgTy },
+    ReturnUnassigned,
+    Next,
+    NextFile,
 }
 
 const _: () = const { assert!(size_of::<Instruction>() <= size_of::<u128>()) };
@@ -187,7 +193,7 @@ impl Display for Instruction {
             Self::Jump { to } => {
                 write!(f, "{op} {to}")
             }
-            Self::Return { arg, ty } => {
+            Self::Return { arg, ty } | Self::Exit { arg, ty } => {
                 write!(f, "{op}")?;
                 fmt_arg(f, arg, ty, " ")
             }
@@ -207,6 +213,9 @@ impl Display for Instruction {
             }
             Self::UserCall { dest, start, end, name } => {
                 write!(f, "{dest} <- {op} {name}, {start}..{end}")
+            }
+            Self::Next | Self::NextFile | Self::ReturnUnassigned => {
+                write!(f, "{op}")
             }
         }
     }
@@ -244,8 +253,11 @@ impl Instruction {
             Self::IndirectCall { .. } => "vcall",
             Self::OutputCall { .. } => "out",
             Self::Jump { .. } => "jmp",
-            Self::Return { .. } => "ret",
+            Self::Return { .. } | Self::ReturnUnassigned => "ret",
             Self::Branch { .. } => "brif",
+            Self::Exit { .. } => "exit",
+            Self::Next => "next",
+            Self::NextFile => "nextf",
         }
     }
 }

@@ -185,10 +185,40 @@ impl<'a> CodeGen<'a> {
                 self.bc
                     .emit(Instruction::OutputCall { start, end, cmd: *name, redir });
             }
+            Statement::Simple(SimpleStatement::Delete(..)) => todo!(),
             Statement::Switch { scrutinee, branches, default } => {
                 self.lower_switch(scrutinee, branches, default.as_ref());
             }
-            _ => todo!(),
+            Statement::ForEach { .. } => todo!(),
+            Statement::Break => todo!(),
+            Statement::Continue => todo!(),
+            Statement::Exit(Some(expr)) => {
+                let dest = self.alloc_reg();
+                self.lower_expr_into(expr, *dest);
+                self.bc
+                    .emit(Instruction::Exit { arg: Arg { reg: *dest }, ty: ArgTy::Reg });
+                self.free_reg(dest);
+            }
+            Statement::Exit(None) => {
+                self.bc
+                    .emit(Instruction::Exit { arg: Arg { imm: 0 }, ty: ArgTy::Imm });
+            }
+            Statement::Return(Some(expr)) => {
+                let dest = self.alloc_reg();
+                self.lower_expr_into(expr, *dest);
+                self.bc
+                    .emit(Instruction::Return { arg: Arg { reg: *dest }, ty: ArgTy::Reg });
+                self.free_reg(dest);
+            }
+            Statement::Return(None) => {
+                self.bc.emit(Instruction::ReturnUnassigned);
+            }
+            Statement::Next => {
+                self.bc.emit(Instruction::Next);
+            }
+            Statement::NextFile => {
+                self.bc.emit(Instruction::NextFile);
+            }
         }
     }
 
