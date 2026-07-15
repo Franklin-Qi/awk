@@ -119,7 +119,7 @@ impl Statement<'_> {
     fn fmt(&self, f: &mut Formatter<'_>, indent: u8, namespace: &str) -> Result {
         match self {
             Self::Simple(simple) => simple.fmt(f, indent, namespace),
-            Self::If { condition, then_body, else_body } => {
+            Self::If { condition, then_body, else_body, .. } => {
                 fmt_seq!(
                     f,
                     "if ",
@@ -136,11 +136,11 @@ impl Statement<'_> {
                     })
                 )
             }
-            Self::While { condition, then_body } => {
+            Self::While { condition, then_body, .. } => {
                 fmt_seq!(f, "while ", p(condition.fmt(f, indent, 0, namespace)), " ")?;
                 write_body(f, then_body, indent, namespace)
             }
-            Self::DoWhile { then_body, condition } => {
+            Self::DoWhile { then_body, condition, .. } => {
                 fmt_seq!(
                     f,
                     "do ",
@@ -149,7 +149,7 @@ impl Statement<'_> {
                     p(condition.fmt(f, indent, 0, namespace))
                 )
             }
-            Self::For { init, condition, update, body } => {
+            Self::For { init, condition, update, body, .. } => {
                 fmt_seq!(
                     f,
                     "for ",
@@ -168,7 +168,7 @@ impl Statement<'_> {
                     write_body(f, body, indent, namespace)
                 )
             }
-            Self::ForEach { variable, array, body } => {
+            Self::ForEach { variable, array, body, .. } => {
                 fmt_seq!(
                     f,
                     "for ",
@@ -177,7 +177,7 @@ impl Statement<'_> {
                     write_body(f, body, indent, namespace)
                 )
             }
-            Self::Switch { scrutinee, branches, default } => {
+            Self::Switch { scrutinee, branches, default, .. } => {
                 fmt_seq!(
                     f,
                     "switch ",
@@ -202,14 +202,16 @@ impl Statement<'_> {
                 tabs(f, indent)?;
                 f.write_char('}')
             }
-            Self::Break => write!(f, "break"),
-            Self::Continue => write!(f, "continue"),
-            Self::Return(Some(expr)) => fmt_seq!(f, "return ", expr.fmt(f, indent, 0, namespace)),
-            Self::Return(None) => write!(f, "return"),
-            Self::Exit(Some(expr)) => fmt_seq!(f, "exit ", expr.fmt(f, indent, 0, namespace)),
-            Self::Exit(None) => write!(f, "exit"),
-            Self::Next => write!(f, "next"),
-            Self::NextFile => write!(f, "nextfile"),
+            Self::Break(_) => write!(f, "break"),
+            Self::Continue(_) => write!(f, "continue"),
+            Self::Return(Some(expr), _) => {
+                fmt_seq!(f, "return ", expr.fmt(f, indent, 0, namespace))
+            }
+            Self::Return(None, _) => write!(f, "return"),
+            Self::Exit(Some(expr), _) => fmt_seq!(f, "exit ", expr.fmt(f, indent, 0, namespace)),
+            Self::Exit(None, _) => write!(f, "exit"),
+            Self::Next(_) => write!(f, "next"),
+            Self::NextFile(_) => write!(f, "nextfile"),
         }
     }
 }
@@ -217,8 +219,8 @@ impl Statement<'_> {
 impl SimpleStatement<'_> {
     fn fmt(&self, f: &mut Formatter<'_>, indent: u8, namespace: &str) -> Result {
         match self {
-            SimpleStatement::Expression(expr) => expr.fmt(f, indent, 0, namespace),
-            SimpleStatement::Command { name, args, redirection: Some((rx, expr)) } => {
+            SimpleStatement::Expression(expr, _) => expr.fmt(f, indent, 0, namespace),
+            SimpleStatement::Command { name, args, redirection: Some((rx, expr)), .. } => {
                 fmt_seq!(
                     f,
                     " {name}",
@@ -227,10 +229,10 @@ impl SimpleStatement<'_> {
                     expr.fmt(f, indent, 0, namespace)
                 )
             }
-            SimpleStatement::Command { name, args, redirection: None } => {
+            SimpleStatement::Command { name, args, redirection: None, .. } => {
                 fmt_seq!(f, "{name} ", write_expr_args(f, args, indent, namespace))
             }
-            SimpleStatement::Delete(array, Some(args)) => {
+            SimpleStatement::Delete(array, Some(args), _) => {
                 fmt_seq!(
                     f,
                     "delete ",
@@ -238,7 +240,9 @@ impl SimpleStatement<'_> {
                     bt(write_expr_args(f, args, indent, namespace))
                 )
             }
-            SimpleStatement::Delete(array, None) => fmt_seq!(f, "delete ", array.fmt(f, namespace)),
+            SimpleStatement::Delete(array, None, _) => {
+                fmt_seq!(f, "delete ", array.fmt(f, namespace))
+            }
         }
     }
 }
@@ -275,8 +279,8 @@ impl RulePattern<'_> {
 impl Expr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>, indent: u8, parent_bp: u8, namespace: &str) -> Result {
         match self {
-            Expr::Leaf(atom) => atom.fmt(f, namespace),
-            Expr::Node(node) => node.as_ref().fmt(f, indent, parent_bp, namespace),
+            Expr::Leaf(atom, _) => atom.fmt(f, namespace),
+            Expr::Node(node, _) => node.as_ref().fmt(f, indent, parent_bp, namespace),
         }
     }
 }
@@ -303,16 +307,16 @@ impl Place<'_> {
     fn fmt(&self, f: &mut Formatter<'_>, namespace: &str) -> Result {
         match self {
             Self::Variable(var) => var.fmt(f, namespace),
-            Self::Record(Expr::Leaf(leaf)) => {
+            Self::Record(Expr::Leaf(leaf, _)) => {
                 fmt_seq!(f, "$", leaf.fmt(f, namespace))
             }
             // Handles edge cases of `$(literal) = rvalue`.
-            Self::Record(Expr::Node(node))
-                if let ExprNode::Parenthesized(Expr::Leaf(leaf)) = node.as_ref() =>
+            Self::Record(Expr::Node(node, _))
+                if let ExprNode::Parenthesized(Expr::Leaf(leaf, _)) = node.as_ref() =>
             {
                 fmt_seq!(f, "$", leaf.fmt(f, namespace))
             }
-            Self::Record(Expr::Node(node)) => {
+            Self::Record(Expr::Node(node, _)) => {
                 fmt_seq!(f, "$", p(node.as_ref().fmt(f, 0, 0, namespace)))
             }
             Self::Index(var, args) => {
@@ -593,7 +597,7 @@ impl<'a> NamespaceState<'a> {
     fn advance(&mut self, f: &mut Formatter<'_>, ast: &Ast<'a>) -> Result {
         // Heuristic: we know search range is upper-bounded by `len() - tl_ix`.
         // Linear search is the best option given constraints.
-        if let Some((_, s)) = ast.ns_metadata.0.iter().find(|&&(i, _)| i == self.tl_ix) {
+        if let Some((_, s)) = ast.ns_metadata.iter().find(|&&(i, _)| i == self.tl_ix) {
             self.tl_ix += 1;
             self.namespace = s;
             writeln!(f, "@namespace \"{s}\"\n")?;

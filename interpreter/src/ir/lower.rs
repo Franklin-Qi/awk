@@ -3,15 +3,15 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{borrow::Cow, mem::forget, ops::Deref};
+use std::{borrow::Cow, mem::forget, ops::Deref, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
 use indexmap_allocator_api::IndexSet;
 use parser::{
     Ast, Atom, BinaryOperator, BinaryPlaceOperator, Body, Command, Expr, ExprNode, Identifier,
-    Place, Rule, RulePattern, SimpleStatement, Statement, UnaryOperator, UnaryPlaceOperator,
-    Variable,
+    MetaId, Place, Rule, RulePattern, SimpleStatement, Statement, UnaryOperator,
+    UnaryPlaceOperator, Variable,
 };
 
 use crate::{
@@ -27,6 +27,7 @@ pub struct CodeGen<'a> {
     pub(crate) symbols: SymbolTable<'a>,
     free_regs: Vec<'a, Reg>,
     pub(crate) reg_pointer: RegWidth,
+    current_metadata: MetaId,
 }
 
 #[must_use]
@@ -44,6 +45,13 @@ enum Operand {
 }
 
 impl<'a> CodeGen<'a> {
+    #[inline(always)]
+    fn emit(&mut self, code: Instruction) -> Label {
+        self.bc.code.push(code);
+        self.bc.metadata.push(self.current_metadata);
+        Label((self.bc.code.len() - 1) as IxWidth)
+    }
+
     pub fn new(arena: &'a Bump) -> Self {
         Self {
             arena,
@@ -52,6 +60,7 @@ impl<'a> CodeGen<'a> {
             symbols: SymbolTable::new_in(arena),
             free_regs: Vec::new_in(arena),
             reg_pointer: 0,
+            current_metadata: MetaId::default(),
         }
     }
 
@@ -97,9 +106,9 @@ impl<'a> CodeGen<'a> {
             let reg = self.alloc_reg();
 
             let TypedArg(arg, ty) = TypedArg::new_imm(0);
-            self.bc.emit(Instruction::Record { dest: *reg, arg, ty });
+            self.emit(Instruction::Record { dest: *reg, arg, ty });
 
-            self.bc.emit(Instruction::OutputCall {
+            self.emit(Instruction::OutputCall {
                 start: *reg,
                 end: Reg((*reg).0 + 1),
                 cmd: Command::Print,
@@ -122,109 +131,139 @@ impl<'a> CodeGen<'a> {
 
     fn lower_statement(&mut self, stmnt: &Statement) {
         match stmnt {
-            Statement::If { condition, then_body, else_body } => {
-                let state = RegsState::new(self);
-                let (if_label, _) = self.emit_branch(condition, |this| this.lower_body(then_body));
+            Statement::If { condition, then_body, else_body, metadata } => {
+                self.with_metadata(*metadata, |this| {
+                    let state = RegsState::new(this);
+                    let (if_label, _) =
+                        this.emit_branch(condition, |this| this.lower_body(then_body));
 
-                if let Some(else_body) = else_body {
-                    self.bc.nth(if_label).push_end_label();
-                    self.emit_jump(|this| state.scope_hwm(this, |this| this.lower_body(else_body)));
-                }
-            }
-            Statement::While { condition, then_body } => {
-                let cond_label = self.following_instr(0);
-                self.emit_branch(condition, |this| {
-                    this.lower_body(then_body);
-                    this.bc.emit(Instruction::Jump { to: cond_label });
-                });
-            }
-            Statement::DoWhile { then_body, condition } => {
-                let then_label = self.following_instr(0);
-                self.lower_body(then_body);
-                let cond_reg = self.alloc_reg();
-                self.lower_expr_into(condition, *cond_reg);
-
-                self.bc.emit(Instruction::Branch {
-                    condition: *cond_reg,
-                    then_label,
-                    else_label: self.following_instr(1),
-                });
-                self.free_reg(cond_reg);
-            }
-            Statement::For { init, condition, update, body } => {
-                if let Some(SimpleStatement::Expression(expr)) = init {
-                    self.lower_expr(expr).free(self);
-                }
-
-                let cond_label = self.following_instr(0);
-                if let Some(condition) = condition {
-                    self.emit_branch(condition, |this| {
-                        this.lower_body(body);
-                        if let Some(SimpleStatement::Expression(expr)) = update {
-                            this.lower_expr(expr).free(this);
-                        }
-                        this.bc.emit(Instruction::Jump { to: cond_label });
-                    });
-                } else {
-                    self.lower_body(body);
-                    if let Some(SimpleStatement::Expression(expr)) = update {
-                        self.lower_expr(expr).free(self);
+                    if let Some(else_body) = else_body {
+                        this.bc.nth(if_label).push_end_label();
+                        this.emit_jump(|this| {
+                            state.scope_hwm(this, |this| this.lower_body(else_body));
+                        });
                     }
-                    self.bc.emit(Instruction::Jump { to: cond_label });
-                }
-            }
-            Statement::Simple(SimpleStatement::Expression(expr)) => {
-                self.lower_expr(expr).free(self);
-            }
-            Statement::Simple(SimpleStatement::Command { name, args, redirection }) => {
-                let (start, end, redir) = self.gen_call_convention(args, |this| {
-                    redirection.as_ref().map(|(r, expr)| {
-                        let redir_reg = this.alloc_reg();
-                        this.lower_expr_into(expr, *redir_reg);
-                        this.free_reg(redir_reg);
-                        *r
-                    })
                 });
-                self.bc
-                    .emit(Instruction::OutputCall { start, end, cmd: *name, redir });
+            }
+            Statement::While { condition, then_body, metadata } => {
+                self.with_metadata(*metadata, |this| {
+                    let cond_label = this.following_instr(0);
+                    this.emit_branch(condition, |this| {
+                        this.lower_body(then_body);
+                        this.emit(Instruction::Jump { to: cond_label });
+                    });
+                });
+            }
+            Statement::DoWhile { then_body, condition, metadata } => {
+                self.with_metadata(*metadata, |this| {
+                    let then_label = this.following_instr(0);
+                    this.lower_body(then_body);
+                    let cond_reg = this.alloc_reg();
+                    this.lower_expr_into(condition, *cond_reg);
+
+                    this.emit(Instruction::Branch {
+                        condition: *cond_reg,
+                        then_label,
+                        else_label: this.following_instr(1),
+                    });
+                    this.free_reg(cond_reg);
+                });
+            }
+            Statement::For { init, condition, update, body, metadata } => {
+                self.with_metadata(*metadata, |this| {
+                    if let Some(SimpleStatement::Expression(expr, metadata)) = init {
+                        this.with_metadata(*metadata, |this| this.lower_expr(expr).free(this));
+                    }
+
+                    let cond_label = this.following_instr(0);
+                    if let Some(condition) = condition {
+                        this.emit_branch(condition, |this| {
+                            this.lower_body(body);
+                            if let Some(SimpleStatement::Expression(expr, metadata)) = update {
+                                this.with_metadata(*metadata, |this| {
+                                    this.lower_expr(expr).free(this);
+                                });
+                            }
+                            this.emit(Instruction::Jump { to: cond_label });
+                        });
+                    } else {
+                        this.lower_body(body);
+                        if let Some(SimpleStatement::Expression(expr, metadata)) = update {
+                            this.with_metadata(*metadata, |this| this.lower_expr(expr).free(this));
+                        }
+                        this.emit(Instruction::Jump { to: cond_label });
+                    }
+                });
+            }
+            Statement::Simple(SimpleStatement::Expression(expr, metadata)) => {
+                self.with_metadata(*metadata, |this| {
+                    this.lower_expr(expr).free(this);
+                });
+            }
+            Statement::Simple(SimpleStatement::Command { name, args, redirection, metadata }) => {
+                self.with_metadata(*metadata, |this| {
+                    let (start, end, redir) = this.gen_call_convention(args, |this| {
+                        redirection.as_ref().map(|(r, expr)| {
+                            let redir_reg = this.alloc_reg();
+                            this.lower_expr_into(expr, *redir_reg);
+                            this.free_reg(redir_reg);
+                            *r
+                        })
+                    });
+                    this.emit(Instruction::OutputCall { start, end, cmd: *name, redir });
+                });
             }
             Statement::Simple(SimpleStatement::Delete(..)) => todo!(),
-            Statement::Switch { scrutinee, branches, default } => {
-                self.lower_switch(scrutinee, branches, default.as_ref());
+            Statement::Switch { scrutinee, branches, default, metadata } => {
+                self.with_metadata(*metadata, |this| {
+                    this.lower_switch(scrutinee, branches, default.as_ref());
+                });
             }
             Statement::ForEach { .. } => todo!(),
-            Statement::Break => todo!(),
-            Statement::Continue => todo!(),
-            Statement::Exit(Some(expr)) => {
-                let dest = self.alloc_reg();
-                self.lower_expr_into(expr, *dest);
+            Statement::Break(_) => todo!(),
+            Statement::Continue(_) => todo!(),
+            Statement::Exit(Some(expr), metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    let dest = this.alloc_reg();
+                    this.lower_expr_into(expr, *dest);
 
-                let TypedArg(arg, ty) = (*dest).into();
-                self.bc.emit(Instruction::Exit { arg, ty });
+                    let TypedArg(arg, ty) = (*dest).into();
+                    this.emit(Instruction::Exit { arg, ty });
 
-                self.free_reg(dest);
+                    this.free_reg(dest);
+                });
             }
-            Statement::Exit(None) => {
-                let TypedArg(arg, ty) = TypedArg::new_imm(0);
-                self.bc.emit(Instruction::Exit { arg, ty });
+            Statement::Exit(None, metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    let TypedArg(arg, ty) = TypedArg::new_imm(0);
+                    this.emit(Instruction::Exit { arg, ty });
+                });
             }
-            Statement::Return(Some(expr)) => {
-                let dest = self.alloc_reg();
-                self.lower_expr_into(expr, *dest);
+            Statement::Return(Some(expr), metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    let dest = this.alloc_reg();
+                    this.lower_expr_into(expr, *dest);
 
-                let TypedArg(arg, ty) = (*dest).into();
-                self.bc.emit(Instruction::Return { arg, ty });
+                    let TypedArg(arg, ty) = (*dest).into();
+                    this.emit(Instruction::Return { arg, ty });
 
-                self.free_reg(dest);
+                    this.free_reg(dest);
+                });
             }
-            Statement::Return(None) => {
-                self.bc.emit(Instruction::ReturnUnassigned);
+            Statement::Return(None, metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    this.emit(Instruction::ReturnUnassigned);
+                });
             }
-            Statement::Next => {
-                self.bc.emit(Instruction::Next);
+            Statement::Next(metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    this.emit(Instruction::Next);
+                });
             }
-            Statement::NextFile => {
-                self.bc.emit(Instruction::NextFile);
+            Statement::NextFile(metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    this.emit(Instruction::NextFile);
+                });
             }
         }
     }
@@ -244,7 +283,7 @@ impl<'a> CodeGen<'a> {
         for (i, (atom, _)) in branches.iter().enumerate() {
             pending_branches.push(self.emit_switch_case_match(*scr, *cmp, atom, i));
         }
-        let no_match_jump = self.bc.emit(Instruction::Jump { to: Label(0) });
+        let no_match_jump = self.emit(Instruction::Jump { to: Label(0) });
 
         let mut case_labels = Vec::with_capacity_in(branches.len(), self.arena);
         case_labels.resize(branches.len(), Label(0));
@@ -293,19 +332,17 @@ impl<'a> CodeGen<'a> {
             Atom::Regex(r) | Atom::TypedRegex(r) => {
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
                 let TypedArg(rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into()));
-                self.bc
-                    .emit(Instruction::Matches { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
+                self.emit(Instruction::Matches { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
             }
             atom => {
                 let case_val = self.lower_atom(atom);
                 let TypedArg(rhs, tyr) = case_val.to_arg();
-                self.bc
-                    .emit(Instruction::Eq { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
+                self.emit(Instruction::Eq { dest: cmp, lhs: lhs.0, rhs, tyl, tyr });
                 case_val.free(self);
             }
         }
 
-        let br_label = self.bc.emit(Instruction::Branch {
+        let br_label = self.emit(Instruction::Branch {
             condition: cmp,
             then_label: Label(0),
             else_label: self.following_instr(1),
@@ -315,8 +352,10 @@ impl<'a> CodeGen<'a> {
 
     fn lower_expr(&mut self, expr: &Expr) -> Operand {
         match expr {
-            Expr::Leaf(atom) => self.lower_atom(atom),
-            Expr::Node(_) => {
+            Expr::Leaf(atom, metadata) => {
+                self.with_metadata(*metadata, |this| this.lower_atom(atom))
+            }
+            Expr::Node(_, _) => {
                 let dest = self.alloc_reg();
                 self.lower_expr_into(expr, *dest);
                 Operand::Reg(dest)
@@ -358,8 +397,7 @@ impl<'a> CodeGen<'a> {
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
                 let TypedArg(rhs, tyr) = TypedArg::new_cnt(self, Value::Regex(buf.into()));
                 let TypedArg(lhs, tyl) = TypedArg(Arg { imm: 0 }, ArgTy::Rec);
-                self.bc
-                    .emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
+                self.emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
                 dest.into()
             }
             _ => todo!(),
@@ -371,115 +409,119 @@ impl<'a> CodeGen<'a> {
         match arg {
             TypedArg(arg, ArgTy::Reg) if unsafe { arg.reg } == dest => {}
             TypedArg(arg, ty) => {
-                self.bc.emit(Instruction::Copy { dest, arg, ty });
+                self.emit(Instruction::Copy { dest, arg, ty });
             }
         }
     }
 
     fn lower_expr_into(&mut self, expr: &Expr, dest: Reg) {
         match expr {
-            Expr::Leaf(atom) => self.lower_atom_into(atom, dest),
-            Expr::Node(node) => match node.as_ref() {
-                ExprNode::UnaryOperation(op, expr) => {
-                    let src = self.lower_expr(expr);
-                    self.bc
-                        .emit(Instruction::from_unary(*op, dest, src.to_arg()));
-                    src.free(self);
-                }
-                ExprNode::BinaryOperation(op, lhs, rhs) => match op {
-                    BinaryOperator::And => self.lower_and_into(lhs, rhs, dest),
-                    BinaryOperator::Or => self.lower_or_into(lhs, rhs, dest),
-                    _ => {
-                        let lhs = self.lower_expr(lhs);
-                        let rhs = self.lower_expr(rhs);
-                        self.bc.emit(Instruction::from_binary(
-                            *op,
-                            dest,
-                            lhs.to_arg(),
-                            rhs.to_arg(),
-                        ));
-                        lhs.free(self);
-                        rhs.free(self);
-                    }
-                },
-                ExprNode::Ternary(condition, true_then, false_then) => {
-                    let (if_label, state) = self.emit_branch(condition, |this| {
-                        RegsState::new(this)
-                            .scope(this, |this| this.lower_expr_into(true_then, dest))
-                            .0
-                    });
-                    self.bc.nth(if_label).push_end_label();
-                    self.emit_jump(|this| {
-                        state.scope_hwm(this, |this| this.lower_expr_into(false_then, dest));
-                    });
-                }
-                ExprNode::BinaryPlaceOperation(op, place, expr) => {
-                    let val = self.lower_expr(expr);
-
-                    let Some(bin_op) = lower_assign_ops(*op) else {
-                        self.store_place(place, dest, val.to_arg());
-                        val.free(self);
-                        return;
-                    };
-
-                    let lhs_reg = self.alloc_reg();
-                    let lhs = self.load_place(*lhs_reg, place);
-                    let rhs = val.to_arg();
-
-                    self.bc
-                        .emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
-                    self.store_place(place, dest, dest.into());
-
-                    self.free_reg(lhs_reg);
-                    val.free(self);
-                }
-                ExprNode::UnaryPlaceOperation(op, place) => {
-                    // Note: val may alias with dest.
-                    let lhs = self.load_place(dest, place);
-                    let one = TypedArg::new_imm(1);
-
-                    match op {
-                        UnaryPlaceOperator::IncrementL => {
-                            self.bc.emit(Instruction::from_binary(
-                                BinaryOperator::Add,
-                                dest,
-                                lhs,
-                                one,
-                            ));
-                            self.store_place(place, dest, dest.into());
+            Expr::Leaf(atom, metadata) => {
+                self.with_metadata(*metadata, |this| this.lower_atom_into(atom, dest));
+            }
+            Expr::Node(node, metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    match node.as_ref() {
+                        ExprNode::UnaryOperation(op, expr) => {
+                            let src = this.lower_expr(expr);
+                            this.emit(Instruction::from_unary(*op, dest, src.to_arg()));
+                            src.free(this);
                         }
-                        UnaryPlaceOperator::DecrementL => {
-                            self.bc.emit(Instruction::from_binary(
-                                BinaryOperator::Subtract,
-                                dest,
-                                lhs,
-                                one,
-                            ));
-                            self.store_place(place, dest, dest.into());
+                        ExprNode::BinaryOperation(op, lhs, rhs) => match op {
+                            BinaryOperator::And => this.lower_and_into(lhs, rhs, dest),
+                            BinaryOperator::Or => this.lower_or_into(lhs, rhs, dest),
+                            _ => {
+                                let lhs = this.lower_expr(lhs);
+                                let rhs = this.lower_expr(rhs);
+                                this.emit(Instruction::from_binary(
+                                    *op,
+                                    dest,
+                                    lhs.to_arg(),
+                                    rhs.to_arg(),
+                                ));
+                                lhs.free(this);
+                                rhs.free(this);
+                            }
+                        },
+                        ExprNode::Ternary(condition, true_then, false_then) => {
+                            let (if_label, state) = this.emit_branch(condition, |this| {
+                                RegsState::new(this)
+                                    .scope(this, |this| this.lower_expr_into(true_then, dest))
+                                    .0
+                            });
+                            this.bc.nth(if_label).push_end_label();
+                            this.emit_jump(|this| {
+                                state
+                                    .scope_hwm(this, |this| this.lower_expr_into(false_then, dest));
+                            });
                         }
-                        UnaryPlaceOperator::IncrementR | UnaryPlaceOperator::DecrementR => {
-                            self.bc.emit(Instruction::from_binary(
-                                BinaryOperator::Add,
-                                dest,
-                                lhs,
-                                TypedArg::new_imm(0),
-                            ));
-                            let tmp = self.alloc_reg();
-                            let update_op = match op {
-                                UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
-                                UnaryPlaceOperator::DecrementR => BinaryOperator::Subtract,
-                                _ => unreachable!(),
+                        ExprNode::BinaryPlaceOperation(op, place, expr) => {
+                            let val = this.lower_expr(expr);
+
+                            let Some(bin_op) = lower_assign_ops(*op) else {
+                                this.store_place(place, dest, val.to_arg());
+                                val.free(this);
+                                return;
                             };
-                            self.bc
-                                .emit(Instruction::from_binary(update_op, *tmp, lhs, one));
-                            self.store_place(place, *tmp, (*tmp).into());
-                            self.free_reg(tmp);
+
+                            let lhs_reg = this.alloc_reg();
+                            let lhs = this.load_place(*lhs_reg, place);
+                            let rhs = val.to_arg();
+
+                            this.emit(Instruction::from_binary(bin_op, dest, lhs, rhs));
+                            this.store_place(place, dest, dest.into());
+
+                            this.free_reg(lhs_reg);
+                            val.free(this);
                         }
+                        ExprNode::UnaryPlaceOperation(op, place) => {
+                            // Note: val may alias with dest.
+                            let lhs = this.load_place(dest, place);
+                            let one = TypedArg::new_imm(1);
+
+                            match op {
+                                UnaryPlaceOperator::IncrementL => {
+                                    this.emit(Instruction::from_binary(
+                                        BinaryOperator::Add,
+                                        dest,
+                                        lhs,
+                                        one,
+                                    ));
+                                    this.store_place(place, dest, dest.into());
+                                }
+                                UnaryPlaceOperator::DecrementL => {
+                                    this.emit(Instruction::from_binary(
+                                        BinaryOperator::Subtract,
+                                        dest,
+                                        lhs,
+                                        one,
+                                    ));
+                                    this.store_place(place, dest, dest.into());
+                                }
+                                UnaryPlaceOperator::IncrementR | UnaryPlaceOperator::DecrementR => {
+                                    this.emit(Instruction::from_binary(
+                                        BinaryOperator::Add,
+                                        dest,
+                                        lhs,
+                                        TypedArg::new_imm(0),
+                                    ));
+                                    let tmp = this.alloc_reg();
+                                    let update_op = match op {
+                                        UnaryPlaceOperator::IncrementR => BinaryOperator::Add,
+                                        UnaryPlaceOperator::DecrementR => BinaryOperator::Subtract,
+                                        _ => unreachable!(),
+                                    };
+                                    this.emit(Instruction::from_binary(update_op, *tmp, lhs, one));
+                                    this.store_place(place, *tmp, (*tmp).into());
+                                    this.free_reg(tmp);
+                                }
+                            }
+                        }
+                        ExprNode::Parenthesized(expr) => this.lower_expr_into(expr, dest),
+                        _ => todo!(),
                     }
-                }
-                ExprNode::Parenthesized(expr) => self.lower_expr_into(expr, dest),
-                _ => todo!(),
-            },
+                });
+            }
         }
     }
 
@@ -493,15 +535,13 @@ impl<'a> CodeGen<'a> {
             Place::Index(Variable::User(ident), index) => {
                 let var = self.symbols.register_user_var(ident, self.arena);
                 let (start, end, _) = self.gen_call_convention(index, |_| ());
-                self.bc
-                    .emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
+                self.emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
                 TypedArg(Arg { sym: var }, ArgTy::UaVal)
             }
             Place::Index(var, index) => {
                 let (start, end, _) = self.gen_call_convention(index, |_| ());
                 let var = var_index(var);
-                self.bc
-                    .emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
+                self.emit(Instruction::LoadA { dest, ty_place: ArgTy::UaVal, start, end, var });
                 TypedArg(Arg { sym: var }, ArgTy::IaVal)
             }
             Place::ChainedIndex(_, _) => todo!(),
@@ -514,25 +554,22 @@ impl<'a> CodeGen<'a> {
             Place::Record(expr) => {
                 let rec = self.lower_expr(expr);
                 let TypedArg(src, tys) = rec.to_arg();
-                self.bc
-                    .emit(Instruction::StoreR { dest, src, tys, arg, ty });
+                self.emit(Instruction::StoreR { dest, src, tys, arg, ty });
                 rec.free(self);
             }
             Place::Variable(Variable::User(ident)) => {
                 let var = self.symbols.register_user_var(ident, self.arena);
-                self.bc
-                    .emit(Instruction::StoreS { dest, ty_place: ArgTy::UsVal, var, arg, ty });
+                self.emit(Instruction::StoreS { dest, ty_place: ArgTy::UsVal, var, arg, ty });
             }
             Place::Variable(var) => {
                 let var = var_index(var);
-                self.bc
-                    .emit(Instruction::StoreS { dest, ty_place: ArgTy::IsVal, var, arg, ty });
+                self.emit(Instruction::StoreS { dest, ty_place: ArgTy::IsVal, var, arg, ty });
             }
             Place::Index(Variable::User(ident), index) => {
                 let var = self.symbols.register_user_var(ident, self.arena);
                 let (start, end, _) = self.gen_call_convention(index, |_| ());
                 let arg = self.spill_to_reg(src);
-                self.bc.emit(Instruction::StoreA {
+                self.emit(Instruction::StoreA {
                     dest,
                     start,
                     end,
@@ -546,7 +583,7 @@ impl<'a> CodeGen<'a> {
                 let (start, end, _) = self.gen_call_convention(index, |_| ());
                 let var = var_index(var);
                 let arg = self.spill_to_reg(src);
-                self.bc.emit(Instruction::StoreA {
+                self.emit(Instruction::StoreA {
                     dest,
                     start,
                     end,
@@ -570,14 +607,14 @@ impl<'a> CodeGen<'a> {
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
             let TypedArg(arg, ty) = TypedArg::new_imm(0);
-            this.bc.emit(Instruction::Copy { dest, arg, ty });
+            this.emit(Instruction::Copy { dest, arg, ty });
         });
     }
 
     fn lower_or_into(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>, dest: Reg) {
         let (if_label, _) = self.emit_branch(lhs, |this| {
             let TypedArg(arg, ty) = TypedArg::new_imm(1);
-            this.bc.emit(Instruction::Copy { dest, arg, ty });
+            this.emit(Instruction::Copy { dest, arg, ty });
         });
         self.bc.nth(if_label).push_end_label();
         self.emit_jump(|this| {
@@ -591,10 +628,10 @@ impl<'a> CodeGen<'a> {
     /// Coerce `src` to an integer truth value (0 or 1), as gawk does via `mkbool()`.
     fn truthify(&mut self, dest: Reg, src: Reg) {
         let TypedArg(arg, ty) = src.into();
-        self.bc.emit(Instruction::Negation { dest, arg, ty });
+        self.emit(Instruction::Negation { dest, arg, ty });
 
         let TypedArg(arg, ty) = dest.into();
-        self.bc.emit(Instruction::Negation { dest, arg, ty });
+        self.emit(Instruction::Negation { dest, arg, ty });
     }
 
     fn emit_branch<T>(
@@ -605,7 +642,7 @@ impl<'a> CodeGen<'a> {
         let condition = self.alloc_reg();
         self.lower_expr_into(condition_expr, *condition);
         let then_label = self.following_instr(1);
-        let if_label = self.bc.emit(Instruction::br(*condition, then_label));
+        let if_label = self.emit(Instruction::br(*condition, then_label));
         self.free_reg(condition);
 
         let res = cb(self);
@@ -616,7 +653,7 @@ impl<'a> CodeGen<'a> {
     }
 
     fn emit_jump<T>(&mut self, cb: impl FnOnce(&mut Self) -> T) -> T {
-        let label = self.bc.emit(Instruction::Jump { to: Label(0) });
+        let label = self.emit(Instruction::Jump { to: Label(0) });
         let res = cb(self);
         let next = self.following_instr(0);
         self.bc.nth(label).set_label(next);
@@ -659,7 +696,7 @@ impl<'a> CodeGen<'a> {
             Either::Left(unsafe { arg.reg })
         } else {
             let dest = self.alloc_reg();
-            self.bc.emit(Instruction::Copy { dest: *dest, arg, ty });
+            self.emit(Instruction::Copy { dest: *dest, arg, ty });
             Either::Right(dest)
         }
     }
@@ -679,10 +716,19 @@ impl<'a> CodeGen<'a> {
     pub fn bytecode(&mut self) -> Bytecode<'a> {
         std::mem::replace(&mut self.bc, Bytecode::with_capacity_in(0, self.arena))
     }
+
+    fn with_metadata<R>(&mut self, metadata: MetaId, f: impl FnOnce(&mut Self) -> R) -> R {
+        let old = self.current_metadata;
+        self.current_metadata = metadata;
+        let ret = f(self);
+        self.current_metadata = old;
+        ret
+    }
 }
 
 pub struct Bytecode<'a> {
-    pub(crate) code: Vec<'a, Instruction>,
+    pub code: Vec<'a, Instruction>,
+    pub metadata: StdVec<MetaId>,
     pub(crate) begin_label: Label,
     pub(crate) begin_file_label: Label,
     pub(crate) end_file_label: Label,
@@ -700,18 +746,13 @@ impl<'a> Bytecode<'a> {
     fn with_capacity_in(cap: usize, arena: &'a Bump) -> Self {
         Self {
             code: Vec::with_capacity_in(cap, arena),
+            metadata: StdVec::with_capacity(cap),
             begin_label: Label(0),
             begin_file_label: Label(0),
             end_file_label: Label(0),
             end_label: Label(0),
             records_label: Label(0),
         }
-    }
-
-    #[inline(always)]
-    fn emit(&mut self, code: Instruction) -> Label {
-        self.code.push(code);
-        Label((self.code.len() - 1) as IxWidth)
     }
 
     fn len(&self) -> IxWidth {
@@ -912,14 +953,15 @@ impl From<&Self> for Reg {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bumpalo::Bump;
     use parser::Parser;
+
+    use super::*;
 
     fn with_lower(source: &str, f: impl FnOnce(&CodeGen<'_>)) {
         let arena = Bump::new();
         let mut parser = Parser::new(&arena, false);
-        let ast = parser.parse("test", source.as_bytes()).expect("parse");
+        let ast = parser.parse(None, source.as_bytes()).expect("parse");
         let mut cg = CodeGen::new(&arena);
         cg.lower_ast(ast);
         f(&cg);

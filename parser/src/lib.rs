@@ -12,7 +12,7 @@ mod sexpr;
 #[cfg(test)]
 mod tests;
 
-use std::mem::replace;
+use std::{mem::replace, path::PathBuf, rc::Rc};
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
@@ -38,7 +38,7 @@ pub struct Parser<'a> {
     #[debug(ignore)]
     preprocessor: Preprocessor,
     #[debug(ignore)]
-    current_file: &'a str,
+    file: Option<Rc<PathBuf>>,
     namespace: &'a str,
     concurrent: bool,
     // Disables file include materialization ands enables metadata recording.
@@ -57,19 +57,32 @@ impl<'a> Parser<'a> {
             ast: Ast::new(arena),
             arena,
             preprocessor: Preprocessor {},
-            current_file: "",
+            file: None,
             namespace: "awk",
             concurrent: false,
             dry,
         }
     }
 
-    pub fn parse(&mut self, name: &'a str, source: &'a [u8]) -> Result<&Ast<'a>, AriadneErr<'a>> {
+    pub fn parse(
+        &mut self,
+        file: Option<Rc<PathBuf>>,
+        source: &'a [u8],
+    ) -> Result<&Ast<'a>, AriadneErr<'a>> {
         let source = self.arena.alloc_slice_copy(source);
-        self.current_file = name;
+        self.file.clone_from(&file);
         let mut lex = Lexer::new(source, self.arena);
         let parsed = self.parse_top(&mut lex, true);
-        parsed.map_err(|error| report_error(error, name, source))
+        parsed.map_err(|error| {
+            report_error(
+                error,
+                // file.clone()
+                //     .and_then(|p| p.file_name())
+                //     .and_then(|p| p.to_str())
+                //     .unwrap_or("CLI"),
+                "TODO", source,
+            )
+        })
     }
 
     #[tracing::instrument]
@@ -139,10 +152,9 @@ impl<'a> Parser<'a> {
                         if self.namespace == namespace {
                             continue; // skip counting.
                         }
-                        let i = self.ast.ns_metadata.1;
                         self.namespace = namespace;
                         if self.dry {
-                            self.ast.ns_metadata.0.push((i, namespace));
+                            self.ast.ns_metadata.store(namespace);
                         }
                     }
                     Token::ConcurrentDirective => {
@@ -170,7 +182,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            self.ast.ns_metadata.1 += 1;
+            self.ast.ns_metadata.tick();
         }
         Ok(&self.ast)
     }
@@ -244,11 +256,13 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
     ) -> Option<Result<SimpleStatement<'a>>> {
-        let peek = lex.expect_peek().ok()?;
+        let (peek, start) = lex.peek_with_span()?;
+        let (peek, start) = (peek.ok()?, start.start);
         if peek.is_expr_start() {
             Some(
-                self.parse_expression(lex, false)
-                    .map(SimpleStatement::Expression),
+                self.parse_expression(lex, false).map(|e| {
+                    SimpleStatement::Expression(e, self.gen_metadata(start..lex.span().end))
+                }),
             )
         } else {
             match peek {
@@ -284,6 +298,7 @@ impl<'a> Parser<'a> {
             Statement::Simple(statement?)
         } else {
             let next = lex.expect_next()?;
+            let start = lex.span().start;
             if lex.is_yuxtaposed() && lex.peek_is(&Token::PathSpec) {
                 return Err(ParsingError::ExpectedIdentifier(lex.span(), None));
             }
@@ -295,13 +310,14 @@ impl<'a> Parser<'a> {
                         .consume(&Token::Else)
                         .then(|| self.parse_statement_body(lex))
                         .transpose()?;
-                    Statement::If { condition, then_body, else_body }
+                    let metadata = self.gen_metadata(start..lex.span().end);
+                    Statement::If { condition, then_body, else_body, metadata }
                 }
                 Token::For => {
                     lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
 
                     if lex.peek_is(&Token::Semicolon) {
-                        self.parse_for_loop(lex, None)?
+                        self.parse_for_loop(lex, None, start)?
                     } else {
                         let enclosed = lex.consume(&Token::OpenParent);
                         let Some(stmnt) = self.parse_simple_statement(lex).transpose()? else {
@@ -312,9 +328,9 @@ impl<'a> Parser<'a> {
                                 &Token::ClosedParent,
                                 ParsingError::UnclosedParenthesisInStatement,
                             )?;
-                            self.parse_for_loop(lex, Some(stmnt))?
+                            self.parse_for_loop(lex, Some(stmnt), start)?
                         } else {
-                            self.parse_for_ambiguous(lex, Some(stmnt))?
+                            self.parse_for_ambiguous(lex, Some(stmnt), start)?
                         }
                     }
                 }
@@ -367,33 +383,38 @@ impl<'a> Parser<'a> {
                         Some(Left(atom)) => branches.push((atom, body.into())),
                         _ => {}
                     }
+                    let metadata = self.gen_metadata(start..lex.span().end);
 
-                    Statement::Switch { scrutinee, branches, default }
+                    Statement::Switch { scrutinee, branches, default, metadata }
                 }
                 Token::While => {
                     let condition = self.parse_parenthesized_expr(lex)?;
                     let then_body = self.parse_statement_body(lex)?;
-                    Statement::While { condition, then_body }
+                    let metadata = self.gen_metadata(start..lex.span().end);
+                    Statement::While { condition, then_body, metadata }
                 }
                 Token::Do => {
                     let then_body = self.parse_body(lex)?;
                     lex.expect(&Token::While, ParsingError::MissingWhileAfterDo)?;
                     let condition = self.parse_parenthesized_expr(lex)?;
-                    Statement::DoWhile { then_body, condition }
+                    let metadata = self.gen_metadata(start..lex.span().end);
+                    Statement::DoWhile { then_body, condition, metadata }
                 }
-                Token::Break => Statement::Break,
-                Token::Continue => Statement::Continue,
+                Token::Break => Statement::Break(self.gen_metadata(lex.span())),
+                Token::Continue => Statement::Continue(self.gen_metadata(lex.span())),
                 Token::Return => Statement::Return(
                     (!lex.peek_with(Token::is_stmnt_or_block_end))
                         .then(|| self.parse_expression(lex, true))
                         .transpose()?,
+                    self.gen_metadata(start..lex.span().end),
                 ),
-                Token::Next => Statement::Next,
-                Token::NextFile => Statement::NextFile,
+                Token::Next => Statement::Next(self.gen_metadata(lex.span())),
+                Token::NextFile => Statement::NextFile(self.gen_metadata(lex.span())),
                 Token::Exit => Statement::Exit(
                     (!lex.peek_with(Token::is_stmnt_or_block_end))
                         .then(|| self.parse_expression(lex, false))
                         .transpose()?,
+                    self.gen_metadata(start..lex.span().end),
                 ),
                 _ => {
                     return Err(ParsingError::UnexpectedToken(
@@ -427,6 +448,7 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
         init: Option<SimpleStatement<'a>>,
+        start: usize,
     ) -> Result<Statement<'a>> {
         lex.consume(&Token::Semicolon);
         lex.consume(&Token::Newline);
@@ -447,7 +469,8 @@ impl<'a> Parser<'a> {
 
         lex.expect(&Token::ClosedParent, ParsingError::InvalidForLoop)?;
         let body = self.parse_statement_body(lex)?;
-        Ok(Statement::For { init, condition, update, body })
+        let metadata = self.gen_metadata(start..lex.span().end);
+        Ok(Statement::For { init, condition, update, body, metadata })
     }
 
     #[tracing::instrument]
@@ -455,21 +478,22 @@ impl<'a> Parser<'a> {
         &mut self,
         lex: &mut Lexer<'a>,
         expr: Option<SimpleStatement<'a>>,
+        start: usize,
     ) -> Result<Statement<'a>> {
         let (array, variable) = match expr {
-            Some(SimpleStatement::Expression(Expr::Node(node)))
+            Some(SimpleStatement::Expression(Expr::Node(node, _), _))
                 if matches!(&*node, ExprNode::ArrayOperation(ArrayOperator::In, _, _)) =>
             {
                 if let ExprNode::ArrayOperation(ArrayOperator::In, array, mut args) =
                     Box::into_inner(node)
-                    && let [Expr::Leaf(Atom::Variable(var))] = &mut *args
+                    && let [Expr::Leaf(Atom::Variable(var), _)] = &mut *args
                 {
                     (array, replace(var, Variable::Nr))
                 } else {
                     return Err(ParsingError::InvalidForLoop(lex.span()));
                 }
             }
-            expr => return self.parse_for_loop(lex, expr),
+            expr => return self.parse_for_loop(lex, expr, start),
         };
 
         lex.expect(
@@ -478,7 +502,8 @@ impl<'a> Parser<'a> {
         )?;
 
         let body = self.parse_statement_body(lex)?;
-        Ok(Statement::ForEach { variable, array, body })
+        let metadata = self.gen_metadata(start..lex.span().end);
+        Ok(Statement::ForEach { variable, array, body, metadata })
     }
 
     #[tracing::instrument]
@@ -518,6 +543,7 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_command(&mut self, lex: &mut Lexer<'a>, name: Command) -> Result<SimpleStatement<'a>> {
+        let start = lex.span().start;
         let parent = lex.consume(&Token::OpenParent);
         let args = if parent {
             let expr = self.parse_function_args(lex)?;
@@ -530,7 +556,8 @@ impl<'a> Parser<'a> {
             self.parse_command_args(lex)?
         };
         let redirection = self.parse_command_redirection(lex)?;
-        Ok(SimpleStatement::Command { name, args, redirection })
+        let metadata = self.gen_metadata(start..lex.span().end);
+        Ok(SimpleStatement::Command { name, args, redirection, metadata })
     }
 
     #[tracing::instrument]
@@ -539,9 +566,11 @@ impl<'a> Parser<'a> {
         lex: &mut Lexer<'a>,
         builtin: BuiltinFunction,
     ) -> Result<SimpleStatement<'a>> {
+        let start = lex.span().start;
         let expr =
             self.parse_function_call(lex, |args| ExprNode::BuiltinCall(builtin, args), lex.span())?;
-        Ok(SimpleStatement::Expression(expr))
+        let metadata = self.gen_metadata(start..lex.span().end);
+        Ok(SimpleStatement::Expression(expr, metadata))
     }
 
     /// Parses arguments to command or function calls; consumes to the end of
@@ -591,6 +620,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_delete(&mut self, lex: &mut Lexer<'a>) -> Result<SimpleStatement<'a>> {
+        let start = lex.span().start;
         let next = lex.expect_next()?;
         let Ok(var) = self.get_place(lex, next) else {
             return Err(ParsingError::OperatorExpectsVariable(lex.span()));
@@ -604,7 +634,8 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        Ok(SimpleStatement::Delete(var, index))
+        let metadata = self.gen_metadata(start..lex.span().end);
+        Ok(SimpleStatement::Delete(var, index, metadata))
     }
 
     #[tracing::instrument]
@@ -678,6 +709,7 @@ impl<'a> Parser<'a> {
         generate: impl FnOnce(Vec<'a, Expr<'a>>) -> ExprNode<'a>,
         span: Span,
     ) -> Result<Expr<'a>> {
+        let start = lex.span().start;
         lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
         if lex.span().start != span.end {
             return Err(ParsingError::FunctionCallSeparatedIdent(span));
@@ -687,7 +719,7 @@ impl<'a> Parser<'a> {
             &Token::ClosedParent,
             ParsingError::FunctionCallMissingParenthesis,
         )?;
-        Ok(Expr::node(expr, self.arena))
+        Ok(Expr::node(expr, self, start..lex.span().end))
     }
 
     #[tracing::instrument]
@@ -752,6 +784,10 @@ impl<'a> Parser<'a> {
             )),
         }
     }
+
+    fn gen_metadata(&mut self, span: Span) -> MetaId {
+        self.ast.loc_metadata.store((span, self.file.clone()))
+    }
 }
 
 impl<'a> Ast<'a> {
@@ -765,7 +801,8 @@ impl<'a> Ast<'a> {
             rules: Vec::new_in(arena),
             concurrent: Vec::new_in(arena),
             functions: HashMap::with_hasher_in(RandomState::new(), arena),
-            ns_metadata: (Vec::new_in(arena), 0),
+            ns_metadata: MetadataStore::new(),
+            loc_metadata: MetadataStore::new(),
         }
     }
 }

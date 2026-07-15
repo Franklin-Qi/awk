@@ -23,7 +23,7 @@ impl Debug for Statement<'_> {
 
         match self {
             Statement::Simple(simple) => <_ as Debug>::fmt(simple, f),
-            Self::If { condition, then_body, else_body } => {
+            Self::If { condition, then_body, else_body, .. } => {
                 if alt {
                     write!(f, "(if {condition:?}\n{pad}")?;
                     write!(f, "{then_body:#ni$?}")?;
@@ -42,21 +42,21 @@ impl Debug for Statement<'_> {
                     write!(f, "(if {condition:?} {then_body:?})")
                 }
             }
-            Self::While { condition, then_body } => {
+            Self::While { condition, then_body, .. } => {
                 if alt {
                     write!(f, "(while {condition:?}\n{pad}{then_body:#ni$?})")
                 } else {
                     write!(f, "(while {condition:?} {then_body:?})")
                 }
             }
-            Self::DoWhile { then_body, condition } => {
+            Self::DoWhile { then_body, condition, .. } => {
                 if alt {
                     write!(f, "(do-while\n{pad}{then_body:#ni$?}\n{pad}{condition:?})")
                 } else {
                     write!(f, "(do-while {then_body:?} {condition:?})")
                 }
             }
-            Self::For { init, condition, update, body } => {
+            Self::For { init, condition, update, body, .. } => {
                 write!(f, "(for")?;
                 if alt {
                     let write_fragment = |f: &mut Formatter, x: Option<&dyn Debug>| {
@@ -84,14 +84,14 @@ impl Debug for Statement<'_> {
                     write!(f, " {body:?})")
                 }
             }
-            Self::ForEach { variable, array, body } => {
+            Self::ForEach { variable, array, body, .. } => {
                 if alt {
                     write!(f, "(for-each {variable:?} {array:?}\n{pad}{body:#ni$?})")
                 } else {
                     write!(f, "(for-each {variable:?} {array:?} {body:?})")
                 }
             }
-            Self::Switch { scrutinee, branches, default } => {
+            Self::Switch { scrutinee, branches, default, .. } => {
                 if alt {
                     if let Some((dx, i)) = default {
                         write!(
@@ -120,14 +120,14 @@ impl Debug for Statement<'_> {
                     }
                 }
             }
-            Self::Continue => write!(f, "(continue)"),
-            Self::Break => write!(f, "(break)"),
-            Self::Return(Some(expr)) => write!(f, "(return {expr:?})"),
-            Self::Return(None) => write!(f, "(return)"),
-            Self::Exit(Some(expr)) => write!(f, "(exit {expr:?})"),
-            Self::Exit(None) => write!(f, "(exit)"),
-            Self::Next => write!(f, "(next)"),
-            Self::NextFile => write!(f, "(nextfile)"),
+            Self::Continue(_) => write!(f, "(continue)"),
+            Self::Break(_) => write!(f, "(break)"),
+            Self::Return(Some(expr), _) => write!(f, "(return {expr:?})"),
+            Self::Return(None, _) => write!(f, "(return)"),
+            Self::Exit(Some(expr), _) => write!(f, "(exit {expr:?})"),
+            Self::Exit(None, _) => write!(f, "(exit)"),
+            Self::Next(_) => write!(f, "(next)"),
+            Self::NextFile(_) => write!(f, "(nextfile)"),
         }
     }
 }
@@ -136,14 +136,14 @@ impl Debug for SimpleStatement<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let (alt, ni, pad) = fmt_vars(f);
         match self {
-            Self::Expression(expr) => {
+            Self::Expression(expr, _) => {
                 if alt {
                     write!(f, "{expr:#ni$?}")
                 } else {
                     write!(f, "{expr:?}")
                 }
             }
-            Self::Command { name, args, redirection: Some((rx, expr)) } => {
+            Self::Command { name, args, redirection: Some((rx, expr)), .. } => {
                 if alt {
                     write!(
                         f,
@@ -155,18 +155,18 @@ impl Debug for SimpleStatement<'_> {
                     write!(f, "({name:?}{:?} ({rx:?} {expr:?}))", ListLispFmt(args))
                 }
             }
-            Self::Command { name, args, redirection: None } => {
+            Self::Command { name, args, redirection: None, .. } => {
                 write!(f, "({name:?}{:?})", ListLispFmt(args))
             }
 
-            Self::Delete(array, Some(index)) => {
+            Self::Delete(array, Some(index), ..) => {
                 write!(f, "(delete (Index {array:?}")?;
                 for i in index {
                     write!(f, " {i:?}")?;
                 }
                 write!(f, "))")
             }
-            Self::Delete(array, None) => write!(f, "(delete {array:?})"),
+            Self::Delete(array, None, _) => write!(f, "(delete {array:?})"),
         }
     }
 }
@@ -174,8 +174,8 @@ impl Debug for SimpleStatement<'_> {
 impl Debug for Expr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Self::Leaf(atom) => write!(f, "{atom:?}"),
-            Self::Node(expr) => match expr.as_ref() {
+            Self::Leaf(atom, _) => write!(f, "{atom:?}"),
+            Self::Node(expr, _) => match expr.as_ref() {
                 // This is an AST construct, and S-exprs are precedence-free.
                 ExprNode::Parenthesized(expr) => expr.fmt(f),
                 ExprNode::FunctionCall(ident, args) => {

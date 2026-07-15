@@ -9,7 +9,7 @@ use bumpalo::{Bump, collections::CollectIn};
 use proptest::prelude::*;
 
 use crate::{
-    Ast, Body, Place, Rule,
+    Ast, Body, ExprNode, MetaId, Place, Rule,
     ast::{
         Atom, BinaryOperator, BinaryPlaceOperator, Command, Expr, Identifier, RulePattern,
         SimpleStatement, Statement, UnaryOperator, Variable,
@@ -67,6 +67,18 @@ pub enum GenAtom {
 #[derive(Clone, Debug)]
 pub enum GenPlace {
     Var(u8),
+}
+
+impl<'a> Expr<'a> {
+    fn leaf_nm(from: impl Into<Atom<'a>>) -> Self {
+        Self::Leaf(from.into(), MetaId::default())
+    }
+
+    pub fn node_nm(op: impl Into<ExprNode<'a>>, arena: &'a Bump) -> Self {
+        use bumpalo::boxed::Box;
+
+        Self::Node(Box::new_in(op.into(), arena), MetaId::default())
+    }
 }
 
 pub fn gen_program() -> impl Strategy<Value = GenProgram> {
@@ -212,7 +224,7 @@ fn materialize_pattern<'a>(pattern: &GenPattern, arena: &'a Bump) -> RulePattern
     match pattern {
         GenPattern::Expr(expr) => RulePattern::Expression(materialize_expr(expr, arena)),
         GenPattern::Regex(n) => {
-            RulePattern::Expression(Expr::leaf(Atom::Regex(regex_slice(arena, *n))))
+            RulePattern::Expression(Expr::leaf_nm(Atom::Regex(regex_slice(arena, *n))))
         }
     }
 }
@@ -235,38 +247,42 @@ fn materialize_statement<'a>(stmnt: &GenStatement, arena: &'a Bump) -> Statement
                 .map(|e| materialize_expr(e, arena))
                 .collect_in(arena),
             redirection: None,
+            metadata: MetaId::default(),
         }),
-        GenStatement::Expr(expr) => {
-            Statement::Simple(SimpleStatement::Expression(materialize_expr(expr, arena)))
-        }
+        GenStatement::Expr(expr) => Statement::Simple(SimpleStatement::Expression(
+            materialize_expr(expr, arena),
+            MetaId::default(),
+        )),
         GenStatement::If { condition, then_body, else_body } => Statement::If {
             condition: materialize_expr(condition, arena),
             then_body: materialize_body(then_body, arena),
             else_body: else_body.as_ref().map(|body| materialize_body(body, arena)),
+            metadata: MetaId::default(),
         },
         GenStatement::While { condition, body } => Statement::While {
             condition: materialize_expr(condition, arena),
             then_body: materialize_body(body, arena),
+            metadata: MetaId::default(),
         },
     }
 }
 
 fn materialize_expr<'a>(expr: &GenExpr, arena: &'a Bump) -> Expr<'a> {
     match expr {
-        GenExpr::Atom(atom) => Expr::leaf(materialize_atom(atom, arena)),
-        GenExpr::Unary(op, inner) => Expr::node(op.expr(materialize_expr(inner, arena)), arena),
-        GenExpr::Binary(op, a, b) => Expr::node(
+        GenExpr::Atom(atom) => Expr::leaf_nm(materialize_atom(atom, arena)),
+        GenExpr::Unary(op, inner) => Expr::node_nm(op.expr(materialize_expr(inner, arena)), arena),
+        GenExpr::Binary(op, a, b) => Expr::node_nm(
             op.expr(materialize_expr(a, arena), materialize_expr(b, arena)),
             arena,
         ),
-        GenExpr::Assign(place, rhs) => Expr::node(
+        GenExpr::Assign(place, rhs) => Expr::node_nm(
             BinaryPlaceOperator::Assignment.expr(
                 materialize_place(place, arena),
                 materialize_expr(rhs, arena),
             ),
             arena,
         ),
-        GenExpr::Index(var, idx) => Expr::node(
+        GenExpr::Index(var, idx) => Expr::node_nm(
             crate::ast::ArrayOperator::Index.expr(
                 materialize_var(*var, arena),
                 bumpalo::vec![in arena; materialize_expr(idx, arena)],

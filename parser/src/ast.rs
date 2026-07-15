@@ -3,7 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::fmt::Debug;
+use std::{fmt::Debug, path::PathBuf, rc::Rc, vec::Vec as StdVec};
 
 use ahash::RandomState;
 use bumpalo::{Bump, boxed::Box, collections::Vec};
@@ -12,7 +12,7 @@ use either::Either;
 use hashbrown::HashMap;
 use lexer::{Slice, Span, Token};
 
-use crate::{ParsingError, Result, lex::TokenExt};
+use crate::{Parser, ParsingError, Result, lex::TokenExt};
 
 #[derive(Debug)]
 pub struct Ast<'a> {
@@ -24,7 +24,8 @@ pub struct Ast<'a> {
     pub rules: Vec<'a, Rule<'a>>,
     pub concurrent: Vec<'a, Rule<'a>>,
     pub functions: HashMap<Identifier<'a>, Function<'a>, RandomState, &'a Bump>,
-    pub ns_metadata: (Vec<'a, (usize, &'a str)>, usize),
+    pub ns_metadata: MetadataStore<&'a str, usize>,
+    pub loc_metadata: MetadataStore<(Span, Option<Rc<PathBuf>>)>,
 }
 
 #[derive(Debug)]
@@ -87,8 +88,8 @@ pub enum Variable<'a> {
 }
 
 pub enum Expr<'a> {
-    Leaf(Atom<'a>),
-    Node(Box<'a, ExprNode<'a>>),
+    Leaf(Atom<'a>, MetaId),
+    Node(Box<'a, ExprNode<'a>>, MetaId),
 }
 
 pub struct Body<'a>(pub Vec<'a, Statement<'a>>);
@@ -207,47 +208,54 @@ pub enum Statement<'a> {
         condition: Expr<'a>,
         then_body: Body<'a>,
         else_body: Option<Body<'a>>,
+        metadata: MetaId,
     },
     While {
         condition: Expr<'a>,
         then_body: Body<'a>,
+        metadata: MetaId,
     },
     DoWhile {
         then_body: Body<'a>,
         condition: Expr<'a>,
+        metadata: MetaId,
     },
     For {
         init: Option<SimpleStatement<'a>>,
         condition: Option<Expr<'a>>,
         update: Option<SimpleStatement<'a>>,
         body: Body<'a>,
+        metadata: MetaId,
     },
     ForEach {
         variable: Variable<'a>,
         array: Variable<'a>,
         body: Body<'a>,
+        metadata: MetaId,
     },
     Switch {
         scrutinee: Expr<'a>,
         branches: Vec<'a, (Atom<'a>, Body<'a>)>,
         default: Option<(Body<'a>, usize)>,
+        metadata: MetaId,
     },
-    Break,
-    Continue,
-    Return(Option<Expr<'a>>),
-    Next,
-    NextFile,
-    Exit(Option<Expr<'a>>),
+    Break(MetaId),
+    Continue(MetaId),
+    Return(Option<Expr<'a>>, MetaId),
+    Next(MetaId),
+    NextFile(MetaId),
+    Exit(Option<Expr<'a>>, MetaId),
 }
 
 pub enum SimpleStatement<'a> {
-    Expression(Expr<'a>),
+    Expression(Expr<'a>, MetaId),
     Command {
         name: Command,
         args: Vec<'a, Expr<'a>>,
         redirection: Option<(Redirection, Expr<'a>)>,
+        metadata: MetaId,
     },
-    Delete(Variable<'a>, Option<Vec<'a, Expr<'a>>>),
+    Delete(Variable<'a>, Option<Vec<'a, Expr<'a>>>, MetaId),
 }
 
 #[derive(Debug)]
@@ -309,12 +317,14 @@ pub enum Command {
 }
 
 impl<'a> Expr<'a> {
-    pub fn leaf(from: impl Into<Atom<'a>>) -> Self {
-        Self::Leaf(from.into())
+    pub fn leaf(from: impl Into<Atom<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
+        let metadata = parser.ast.loc_metadata.store((span, parser.file.clone()));
+        Self::Leaf(from.into(), metadata)
     }
 
-    pub fn node(op: impl Into<ExprNode<'a>>, arena: &'a Bump) -> Self {
-        Self::Node(Box::new_in(op.into(), arena))
+    pub fn node(op: impl Into<ExprNode<'a>>, parser: &mut Parser<'a>, span: Span) -> Self {
+        let metadata = parser.ast.loc_metadata.store((span, parser.file.clone()));
+        Self::Node(Box::new_in(op.into(), parser.arena), metadata)
     }
 }
 
@@ -356,7 +366,7 @@ impl<'a> From<Getline<'a>> for ExprNode<'a> {
 
 impl Expr<'_> {
     pub fn take(&mut self) -> Self {
-        std::mem::replace(self, Self::Leaf(Atom::Number(0.)))
+        std::mem::replace(self, Self::Leaf(Atom::Number(0.), MetaId::default()))
     }
 }
 
@@ -480,8 +490,8 @@ impl<'a> Place<'a> {
     /// Attempts to lower an expression into a place; on error returns it back.
     pub fn lower_from(expr: Expr<'a>, span: Span) -> Result<Self, (Expr<'a>, ParsingError)> {
         match expr {
-            Expr::Leaf(Atom::Variable(var)) => Ok(Self::Variable(var)),
-            Expr::Node(node)
+            Expr::Leaf(Atom::Variable(var), _) => Ok(Self::Variable(var)),
+            Expr::Node(node, _)
                 if matches!(
                     &*node,
                     &ExprNode::UnaryOperation(UnaryOperator::Record, _)
@@ -527,6 +537,56 @@ impl WriteKind {
             Self::Pipe => Getline::PipeOut(var, expr),
             Self::Coprocess => Getline::CoprocessOut(var, expr),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MetadataStore<T, E = ()> {
+    storage: StdVec<(E, T)>,
+    epoch: E,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MetaId(usize);
+
+impl<T, E: Copy + Default> MetadataStore<T, E> {
+    pub fn new() -> Self {
+        Self { storage: StdVec::new(), epoch: E::default() }
+    }
+
+    pub fn store(&mut self, value: T) -> MetaId {
+        let id = self.storage.len();
+        self.storage.push((self.epoch, value));
+        MetaId(id)
+    }
+
+    pub fn get(&self, index: MetaId) -> Option<&(E, T)> {
+        self.storage.get(index.0)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(E, T)> {
+        self.storage.iter()
+    }
+}
+
+// We have specialization at home.
+impl<T, E: std::ops::AddAssign + From<u8>> MetadataStore<T, E> {
+    pub fn tick(&mut self) {
+        self.epoch += E::from(1u8);
+    }
+}
+
+impl<T, E> std::ops::Index<MetaId> for MetadataStore<T, E> {
+    type Output = (E, T);
+
+    fn index(&self, index: MetaId) -> &Self::Output {
+        &self.storage[index.0]
+    }
+}
+
+impl<T> Default for MetadataStore<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

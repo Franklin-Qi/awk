@@ -88,9 +88,7 @@ impl Value<'_> {
         let Ok(pattern) = str::from_utf8(pattern) else {
             return false;
         };
-        regex::Regex::new(pattern)
-            .ok()
-            .is_some_and(|re| re.is_match(subject))
+        regex::Regex::new(pattern).is_ok_and(|re| re.is_match(subject))
     }
 
     pub fn write_string(&self, f: &mut Vec<u8>) {
