@@ -30,6 +30,7 @@ pub struct CodeGen<'a> {
     pub(crate) reg_pointer: RegWidth,
     current_metadata: MetaId,
     break_exits: Option<StdVec<Label>>,
+    continue_label: Option<Label>,
 }
 
 #[must_use]
@@ -64,6 +65,7 @@ impl<'a> CodeGen<'a> {
             reg_pointer: 0,
             current_metadata: MetaId::default(),
             break_exits: None,
+            continue_label: None,
         }
     }
 
@@ -154,7 +156,9 @@ impl<'a> CodeGen<'a> {
                     this.emit_branch(condition, |this| {
                         // Wrap loop-back so `break` jumps past the entire loop.
                         this.with_break_scope(|this| {
-                            this.lower_body(then_body);
+                            this.with_continue_label(cond_label, |this| {
+                                this.lower_body(then_body);
+                            });
                             this.emit(Instruction::Jump { to: cond_label });
                         });
                     });
@@ -162,18 +166,36 @@ impl<'a> CodeGen<'a> {
             }
             Statement::DoWhile { then_body, condition, metadata } => {
                 self.with_metadata(*metadata, |this| {
+                    // Layout so the continue target (condition) is known before the body:
+                    //   jmp body
+                    // continue:
+                    //   cond; brif body, end
+                    // body:
+                    //   ...; jmp continue
                     this.with_break_scope(|this| {
-                        let then_label = this.following_instr(0);
-                        this.lower_body(then_body);
+                        let to_body = this.emit(Instruction::Jump { to: Label(0) });
+                        let continue_label = this.following_instr(0);
+
                         let cond_reg = this.alloc_reg();
                         this.lower_expr_into(condition, *cond_reg);
-
-                        this.emit(Instruction::Branch {
+                        let branch = this.emit(Instruction::Branch {
                             condition: *cond_reg,
-                            then_label,
-                            else_label: this.following_instr(1),
+                            then_label: Label(0),
+                            else_label: Label(0),
                         });
                         this.free_reg(cond_reg);
+
+                        let body_label = this.following_instr(0);
+                        this.bc.nth(to_body).set_label(body_label);
+                        this.bc.nth(branch).set_then_label(body_label);
+
+                        this.with_continue_label(continue_label, |this| {
+                            this.lower_body(then_body);
+                        });
+                        this.emit(Instruction::Jump { to: continue_label });
+
+                        let end_label = this.following_instr(0);
+                        this.bc.nth(branch).set_label(end_label);
                     });
                 });
             }
@@ -183,28 +205,35 @@ impl<'a> CodeGen<'a> {
                         this.with_metadata(*metadata, |this| this.lower_expr(expr).free(this));
                     }
 
+                    // Layout so continue jumps to the update clause (gawk/POSIX):
+                    //   init; jmp cond
+                    // continue: update
+                    // cond: brif body / end; body; jmp continue
+                    let to_cond = this.emit(Instruction::Jump { to: Label(0) });
+                    let continue_label = this.following_instr(0);
+                    if let Some(SimpleStatement::Expression(expr, metadata)) = update {
+                        this.with_metadata(*metadata, |this| {
+                            this.lower_expr(expr).free(this);
+                        });
+                    }
                     let cond_label = this.following_instr(0);
+                    this.bc.nth(to_cond).set_label(cond_label);
+
                     if let Some(condition) = condition {
                         this.emit_branch(condition, |this| {
                             this.with_break_scope(|this| {
-                                this.lower_body(body);
-                                if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                                    this.with_metadata(*metadata, |this| {
-                                        this.lower_expr(expr).free(this);
-                                    });
-                                }
-                                this.emit(Instruction::Jump { to: cond_label });
+                                this.with_continue_label(continue_label, |this| {
+                                    this.lower_body(body);
+                                });
+                                this.emit(Instruction::Jump { to: continue_label });
                             });
                         });
                     } else {
                         this.with_break_scope(|this| {
-                            this.lower_body(body);
-                            if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                                this.with_metadata(*metadata, |this| {
-                                    this.lower_expr(expr).free(this);
-                                });
-                            }
-                            this.emit(Instruction::Jump { to: cond_label });
+                            this.with_continue_label(continue_label, |this| {
+                                this.lower_body(body);
+                            });
+                            this.emit(Instruction::Jump { to: continue_label });
                         });
                     }
                 });
@@ -244,7 +273,15 @@ impl<'a> CodeGen<'a> {
                     }
                 });
             }
-            Statement::Continue(_) => todo!(),
+            Statement::Continue(metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    // Parser rejects `continue` outside a loop (#75).
+                    let Some(to) = this.continue_label else {
+                        unreachable!("continue outside loop");
+                    };
+                    this.emit(Instruction::Jump { to });
+                });
+            }
             Statement::Exit(Some(expr), metadata) => {
                 self.with_metadata(*metadata, |this| {
                     let dest = this.alloc_reg();
@@ -762,6 +799,14 @@ impl<'a> CodeGen<'a> {
         self.break_exits = prev;
         ret
     }
+
+    /// Set the continue target for the duration of `f`, restoring the previous value after.
+    fn with_continue_label<R>(&mut self, label: Label, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.continue_label.replace(label);
+        let ret = f(self);
+        self.continue_label = prev;
+        ret
+    }
 }
 
 #[derive(Debug)]
@@ -1212,5 +1257,104 @@ mod tests {
                 cg.bc
             );
         });
+    }
+
+    #[test]
+    fn continue_in_while_jumps_to_condition() {
+        with_lower("BEGIN { while (1) { continue } }", |cg| {
+            let targets = jump_targets(cg);
+            assert!(
+                targets.len() >= 2,
+                "expected continue + loop-back jumps:\n{}",
+                cg.bc
+            );
+            // Both continue and the end-of-body jump re-enter at the condition.
+            assert!(
+                targets.windows(2).any(|w| w[0] == w[1]),
+                "continue should share the while condition label with the loop-back:\n{}",
+                cg.bc
+            );
+        });
+    }
+
+    #[test]
+    fn continue_in_for_jumps_to_update() {
+        with_lower("BEGIN { for (i = 0; i < 3; i++) { continue } }", |cg| {
+            let targets = jump_targets(cg);
+            let min = *targets.iter().min().expect("jumps");
+            let max = *targets.iter().max().expect("jumps");
+            assert!(
+                min < max,
+                "update (continue) label should precede condition:\n{}",
+                cg.bc
+            );
+            // Initial jump skips update → condition; continue + loop-back → update.
+            assert_eq!(
+                targets.iter().filter(|&&t| t == min).count(),
+                2,
+                "continue and loop-back should jump to update:\n{}",
+                cg.bc
+            );
+            assert_eq!(
+                targets.iter().filter(|&&t| t == max).count(),
+                1,
+                "one jump should skip update into the condition:\n{}",
+                cg.bc
+            );
+        });
+    }
+
+    #[test]
+    fn continue_in_do_while_jumps_to_condition() {
+        with_lower("BEGIN { do { continue } while (0) }", |cg| {
+            let targets = jump_targets(cg);
+            let min = *targets.iter().min().expect("jumps");
+            let max = *targets.iter().max().expect("jumps");
+            assert!(
+                min < max,
+                "condition (continue) label should precede body:\n{}",
+                cg.bc
+            );
+            assert_eq!(
+                targets.iter().filter(|&&t| t == min).count(),
+                2,
+                "continue and loop-back should jump to the condition:\n{}",
+                cg.bc
+            );
+            assert_eq!(
+                targets.iter().filter(|&&t| t == max).count(),
+                1,
+                "one jump should enter the body on first iteration:\n{}",
+                cg.bc
+            );
+        });
+    }
+
+    #[test]
+    fn nested_continue_targets_innermost_loop() {
+        // Outer while + inner for: continue must use the for update label, not the while condition.
+        with_lower(
+            "BEGIN { while (1) { for (i = 0; i < 3; i++) { continue } } }",
+            |cg| {
+                let targets = jump_targets(cg);
+                // Among jumps, the innermost continue/loop-back share the smallest label that
+                // is hit twice (the for update). The while loop-back is a distinct third target.
+                let mut counts = std::collections::BTreeMap::<IxWidth, usize>::new();
+                for t in &targets {
+                    *counts.entry(*t).or_default() += 1;
+                }
+                let twice = counts.iter().filter(|(_, c)| **c == 2).count();
+                assert!(
+                    twice >= 1,
+                    "inner for continue+loop-back should share a label:\n{}",
+                    cg.bc
+                );
+                assert!(
+                    counts.len() >= 3,
+                    "nested loops should produce distinct continue/loop targets:\n{}",
+                    cg.bc
+                );
+            },
+        );
     }
 }

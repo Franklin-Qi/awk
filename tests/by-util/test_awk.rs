@@ -188,6 +188,40 @@ fn break_in_switch_inside_loop_only_leaves_switch() {
         .stdout_only("a\nx\nb\nx\n");
 }
 
+#[test]
+fn continue_in_while_skips_rest_of_body() {
+    ucmd()
+        .arg("BEGIN { i=0; while (i<5) { i++; if (i==3) continue; print i } }")
+        .succeeds()
+        .stdout_only("1\n2\n4\n5\n");
+}
+
+#[test]
+fn continue_in_for_runs_update_clause() {
+    ucmd()
+        .arg("BEGIN { for (i=0; i<=5; i++) { if (i==3) continue; print i } }")
+        .succeeds()
+        .stdout_only("0\n1\n2\n4\n5\n");
+}
+
+#[test]
+fn continue_in_do_while_skips_rest_of_body() {
+    ucmd()
+        .arg("BEGIN { i=0; do { i++; if (i==2) continue; print i } while (i<4) }")
+        .succeeds()
+        .stdout_only("1\n3\n4\n");
+}
+
+#[test]
+fn continue_targets_innermost_loop() {
+    ucmd()
+        .arg(
+            "BEGIN { for (i=0; i<3; i++) { for (j=0; j<3; j++) { if (j==1) continue; print i, j } } }",
+        )
+        .succeeds()
+        .stdout_only("0 0\n0 2\n1 0\n1 2\n2 0\n2 2\n");
+}
+
 // Regression test for issue #5: writing to /dev/full must not panic.
 #[cfg(target_os = "linux")]
 #[test]
