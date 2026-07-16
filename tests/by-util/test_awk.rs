@@ -136,6 +136,58 @@ fn short_circuit_or_skips_rhs_side_effects() {
         .stdout_only("1\n0\n");
 }
 
+#[test]
+fn break_in_while_exits_loop() {
+    ucmd()
+        .arg("BEGIN { i=0; while (i<5) { i++; if (i==3) break; print i } }")
+        .succeeds()
+        .stdout_only("1\n2\n");
+}
+
+#[test]
+fn break_in_for_exits_loop() {
+    ucmd()
+        .arg("BEGIN { for (i=0; i<=5; i++) { if (i==3) break; print i } }")
+        .succeeds()
+        .stdout_only("0\n1\n2\n");
+}
+
+#[test]
+fn break_in_do_while_exits_loop() {
+    ucmd()
+        .arg("BEGIN { i=0; do { i++; if (i==3) break; print i } while (i<5) }")
+        .succeeds()
+        .stdout_only("1\n2\n");
+}
+
+#[test]
+fn break_targets_innermost_loop() {
+    ucmd()
+        .arg(
+            "BEGIN { for (i=0; i<3; i++) { for (j=0; j<3; j++) { if (j==1) break; print i, j } } }",
+        )
+        .succeeds()
+        .stdout_only("0 0\n1 0\n2 0\n");
+}
+
+#[test]
+fn break_in_switch_stops_fallthrough() {
+    ucmd()
+        .arg("BEGIN { x=1; switch (x) { case 1: print 1; break; case 2: print 2; default: print 3 } }")
+        .succeeds()
+        .stdout_only("1\n");
+}
+
+#[test]
+fn break_in_switch_inside_loop_only_leaves_switch() {
+    ucmd()
+        .arg(
+            "BEGIN { for (i=0; i<2; i++) { switch (i) { case 0: print \"a\"; break; case 1: print \"b\" }; print \"x\" } }",
+        )
+        .succeeds()
+        .stdout_only("a\nx\nb\nx\n");
+}
+
 // Regression test for issue #5: writing to /dev/full must not panic.
 #[cfg(target_os = "linux")]
 #[test]

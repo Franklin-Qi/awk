@@ -28,6 +28,7 @@ pub struct CodeGen<'a> {
     free_regs: Vec<'a, Reg>,
     pub(crate) reg_pointer: RegWidth,
     current_metadata: MetaId,
+    break_exits: Option<StdVec<Label>>,
 }
 
 #[must_use]
@@ -61,6 +62,7 @@ impl<'a> CodeGen<'a> {
             free_regs: Vec::new_in(arena),
             reg_pointer: 0,
             current_metadata: MetaId::default(),
+            break_exits: None,
         }
     }
 
@@ -149,24 +151,29 @@ impl<'a> CodeGen<'a> {
                 self.with_metadata(*metadata, |this| {
                     let cond_label = this.following_instr(0);
                     this.emit_branch(condition, |this| {
-                        this.lower_body(then_body);
-                        this.emit(Instruction::Jump { to: cond_label });
+                        // Wrap loop-back so `break` jumps past the entire loop.
+                        this.with_break_scope(|this| {
+                            this.lower_body(then_body);
+                            this.emit(Instruction::Jump { to: cond_label });
+                        });
                     });
                 });
             }
             Statement::DoWhile { then_body, condition, metadata } => {
                 self.with_metadata(*metadata, |this| {
-                    let then_label = this.following_instr(0);
-                    this.lower_body(then_body);
-                    let cond_reg = this.alloc_reg();
-                    this.lower_expr_into(condition, *cond_reg);
+                    this.with_break_scope(|this| {
+                        let then_label = this.following_instr(0);
+                        this.lower_body(then_body);
+                        let cond_reg = this.alloc_reg();
+                        this.lower_expr_into(condition, *cond_reg);
 
-                    this.emit(Instruction::Branch {
-                        condition: *cond_reg,
-                        then_label,
-                        else_label: this.following_instr(1),
+                        this.emit(Instruction::Branch {
+                            condition: *cond_reg,
+                            then_label,
+                            else_label: this.following_instr(1),
+                        });
+                        this.free_reg(cond_reg);
                     });
-                    this.free_reg(cond_reg);
                 });
             }
             Statement::For { init, condition, update, body, metadata } => {
@@ -178,6 +185,18 @@ impl<'a> CodeGen<'a> {
                     let cond_label = this.following_instr(0);
                     if let Some(condition) = condition {
                         this.emit_branch(condition, |this| {
+                            this.with_break_scope(|this| {
+                                this.lower_body(body);
+                                if let Some(SimpleStatement::Expression(expr, metadata)) = update {
+                                    this.with_metadata(*metadata, |this| {
+                                        this.lower_expr(expr).free(this);
+                                    });
+                                }
+                                this.emit(Instruction::Jump { to: cond_label });
+                            });
+                        });
+                    } else {
+                        this.with_break_scope(|this| {
                             this.lower_body(body);
                             if let Some(SimpleStatement::Expression(expr, metadata)) = update {
                                 this.with_metadata(*metadata, |this| {
@@ -186,12 +205,6 @@ impl<'a> CodeGen<'a> {
                             }
                             this.emit(Instruction::Jump { to: cond_label });
                         });
-                    } else {
-                        this.lower_body(body);
-                        if let Some(SimpleStatement::Expression(expr, metadata)) = update {
-                            this.with_metadata(*metadata, |this| this.lower_expr(expr).free(this));
-                        }
-                        this.emit(Instruction::Jump { to: cond_label });
                     }
                 });
             }
@@ -220,7 +233,16 @@ impl<'a> CodeGen<'a> {
                 });
             }
             Statement::ForEach { .. } => todo!(),
-            Statement::Break(_) => todo!(),
+            Statement::Break(metadata) => {
+                self.with_metadata(*metadata, |this| {
+                    // Parser rejects `break` outside a loop or switch (#75).
+                    let jump = this.emit(Instruction::Jump { to: Label(0) });
+                    match this.break_exits.as_mut() {
+                        Some(exits) => exits.push(jump),
+                        None => unreachable!("break outside loop or switch"),
+                    }
+                });
+            }
             Statement::Continue(_) => todo!(),
             Statement::Exit(Some(expr), metadata) => {
                 self.with_metadata(*metadata, |this| {
@@ -287,24 +309,25 @@ impl<'a> CodeGen<'a> {
 
         let mut case_labels = Vec::with_capacity_in(branches.len(), self.arena);
         case_labels.resize(branches.len(), Label(0));
+        let mut default_label = None;
 
-        for (i, (_, body)) in branches.iter().enumerate().take(default_pos) {
-            case_labels[i] = Label(self.bc.len());
-            self.lower_body(body);
-        }
+        // One break scope for all cases so `break` skips fall-through (gawk/C).
+        self.with_break_scope(|this| {
+            for (i, (_, body)) in branches.iter().enumerate().take(default_pos) {
+                case_labels[i] = Label(this.bc.len());
+                this.lower_body(body);
+            }
 
-        let default_label = if let Some((body, _)) = default {
-            let label = Label(self.bc.len());
-            self.lower_body(body);
-            Some(label)
-        } else {
-            None
-        };
+            if let Some((body, _)) = default {
+                default_label = Some(Label(this.bc.len()));
+                this.lower_body(body);
+            }
 
-        for (i, (_, body)) in branches.iter().enumerate().skip(default_pos) {
-            case_labels[i] = Label(self.bc.len());
-            self.lower_body(body);
-        }
+            for (i, (_, body)) in branches.iter().enumerate().skip(default_pos) {
+                case_labels[i] = Label(this.bc.len());
+                this.lower_body(body);
+            }
+        });
 
         let end_switch = self.following_instr(0);
 
@@ -724,6 +747,20 @@ impl<'a> CodeGen<'a> {
         self.current_metadata = old;
         ret
     }
+
+    /// Run `f` as the body of a loop/`switch`, patching `break` jumps to the end.
+    fn with_break_scope<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.break_exits.replace(StdVec::new());
+        let ret = f(self);
+        let end = self.following_instr(0);
+        if let Some(exits) = self.break_exits.take() {
+            for jump in exits {
+                self.bc.nth(jump).set_label(end);
+            }
+        }
+        self.break_exits = prev;
+        ret
+    }
 }
 
 pub struct Bytecode<'a> {
@@ -1105,6 +1142,73 @@ mod tests {
         with_lower("BEGIN { print (1 || 0) }", |cg| single = brif_count(cg));
         with_lower("BEGIN { print (1 || 0 || 2) }", |cg| {
             assert_eq!(brif_count(cg), single + 1, "each || should add one branch");
+        });
+    }
+
+    fn jump_targets(cg: &CodeGen<'_>) -> StdVec<IxWidth> {
+        cg.bc
+            .code
+            .iter()
+            .filter_map(|i| match i {
+                Instruction::Jump { to } => Some(to.0),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn break_in_while_jumps_past_loop() {
+        with_lower("BEGIN { while (1) { break } }", |cg| {
+            let targets = jump_targets(cg);
+            assert!(!targets.is_empty(), "expected break jump:\n{}", cg.bc);
+            let max = *targets.iter().max().expect("jumps");
+            // Break must land at/after the last emitted instruction index (past loop-back).
+            assert!(
+                targets.iter().any(|&t| t == max),
+                "break should jump to the loop exit:\n{}",
+                cg.bc
+            );
+            assert!(
+                max >= cg.bc.len().saturating_sub(1),
+                "break target should be at the end of the loop:\n{}",
+                cg.bc
+            );
+        });
+    }
+
+    #[test]
+    fn break_in_switch_jumps_to_end() {
+        with_lower(
+            "BEGIN { switch (1) { case 1: break; case 2: print 2 } }",
+            |cg| {
+                let targets = jump_targets(cg);
+                assert!(
+                    targets.iter().any(|&t| t == cg.bc.len()),
+                    "break should jump to end of switch:\n{}",
+                    cg.bc
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn nested_break_targets_innermost() {
+        with_lower("BEGIN { while (1) { for (;;) { break } } }", |cg| {
+            let targets = jump_targets(cg);
+            // Inner for break + outer while loop-back (and possibly more) produce jumps;
+            // the earliest jump target should be the inner for exit (before outer loop-back).
+            assert!(
+                targets.len() >= 2,
+                "expected inner break and outer loop jumps:\n{}",
+                cg.bc
+            );
+            let min = *targets.iter().min().expect("jumps");
+            let max = *targets.iter().max().expect("jumps");
+            assert!(
+                min < max,
+                "innermost break exit should precede outer loop targets:\n{}",
+                cg.bc
+            );
         });
     }
 }
