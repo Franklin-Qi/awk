@@ -629,23 +629,62 @@ fn test_parser_control_flow() {
     let source = r"
         { next }
         { nextfile }
-        { continue }
-        { return }
-        { return 1 }
         { exit }
         { exit 1 }
+        { while (0) { break; continue } }
+        { for (;;) { break; continue } }
+        { do { break; continue } while (0) }
+        { for (k in a) { break; continue } }
+        { switch (x) { case 1: break } }
+        function f() { return 1 }
     ";
     test_parser!(source => {
         rules: [
             (None, Some("(body (next))")),
             (None, Some("(body (nextfile))")),
-            (None, Some("(body (continue))")),
-            (None, Some("(body (return))")),
-            (None, Some("(body (return 1))")),
             (None, Some("(body (exit))")),
             (None, Some("(body (exit 1))")),
+            (None, Some("(body (while 0 (body (break) (continue))))")),
+            (None, Some("(body (for (pass) (pass) (pass) (body (break) (continue))))")),
+            (None, Some("(body (do-while (body (break) (continue)) 0))")),
+            (None, Some("(body (for-each awk::k awk::a (body (break) (continue))))")),
+            (None, Some("(body (switch awk::x (case 1 (body (break)))))")),
+        ],
+        functions: [
+            ("awk::f", &[], "(body (return 1))"),
         ],
     });
+
+    test_parser!(is_err!(
+        "{ break }",
+        "{ continue }",
+        "{ return }",
+        "{ return 1 }",
+        "{ if (1) break }",
+        "{ if (1) continue }",
+        "{ if (1) return }",
+        "{ switch (x) { case 1: continue } }",
+        "{ switch (x) { case 1: return } }"
+    ));
+
+    let arena = Bump::new();
+    assert!(matches!(
+        parse("{ break }", &arena),
+        Err(ParsingError::BreakOutsideLoopOrSwitch(_))
+    ));
+    assert!(matches!(
+        parse("{ continue }", &arena),
+        Err(ParsingError::ContinueOutsideLoop(_))
+    ));
+    assert!(matches!(
+        parse("{ return }", &arena),
+        Err(ParsingError::ReturnOutsideFunction(_))
+    ));
+    assert!(matches!(
+        parse("{ switch (x) { case 1: continue } }", &arena),
+        Err(ParsingError::ContinueOutsideLoop(_))
+    ));
+    assert!(parse("function f() { return }", &arena).is_ok());
 }
 
 #[test]

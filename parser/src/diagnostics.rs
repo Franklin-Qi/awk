@@ -76,6 +76,12 @@ pub enum ParsingError {
     SpecialVariableIndirectCall(Span, String),
     #[error("Can't chain non-associative operators.")]
     NonAssociativeOperator(Span),
+    #[error("`break' is not allowed outside a loop or switch")]
+    BreakOutsideLoopOrSwitch(Span),
+    #[error("`continue' is not allowed outside a loop")]
+    ContinueOutsideLoop(Span),
+    #[error("`return' used outside function context")]
+    ReturnOutsideFunction(Span),
 }
 
 impl ParsingError {
@@ -122,6 +128,9 @@ impl ParsingError {
             Self::SpecialVariableCall(span, _) => Some(span.clone()),
             Self::SpecialVariableIndirectCall(span, _) => Some(span.clone()),
             Self::NonAssociativeOperator(span) => Some(span.clone()),
+            Self::BreakOutsideLoopOrSwitch(span) => Some(span.clone()),
+            Self::ContinueOutsideLoop(span) => Some(span.clone()),
+            Self::ReturnOutsideFunction(span) => Some(span.clone()),
         }
     }
     fn hint(&self) -> Option<&'static str> {
