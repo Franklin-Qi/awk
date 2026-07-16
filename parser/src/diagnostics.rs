@@ -3,6 +3,8 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
+use std::{fmt::Display, path::PathBuf, rc::Rc};
+
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use either::Either;
 use lexer::{LexingError, Span};
@@ -197,26 +199,38 @@ impl ParsingError {
     }
 }
 
-pub fn report_error<'a>(
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FileCache(pub Option<Rc<PathBuf>>);
+
+impl Display for FileCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(p) => write!(f, "{}", p.display()),
+            None => f.write_str("CLI"),
+        }
+    }
+}
+
+pub fn report_error(
     error: ParsingError,
-    name: &'a str,
-    source: &'a [u8],
-) -> super::AriadneErr<'a> {
+    name: Option<Rc<PathBuf>>,
+    source: &[u8],
+) -> super::AriadneErr<'_> {
     // TODO: invert the interface, so error types set the diagnostic labels.
     // TODO: use a shared ariadne instance so we can also emit warnings.
     let span = error.span().unwrap_or(source.len()..source.len());
     let source = str::from_utf8(source).unwrap();
-    let mut report = Report::build(ReportKind::Error, (name, span.clone()))
+    let mut report = Report::build(ReportKind::Error, (FileCache(name.clone()), span.clone()))
         .with_message("Syntax error")
         .with_label(
-            Label::new((name, span.clone()))
+            Label::new((FileCache(name.clone()), span.clone()))
                 .with_message(format!("{error}"))
                 .with_color(Color::Red)
                 .with_order(1),
         );
     if let Some((str, span, order)) = error.secondary() {
         report.add_label(
-            Label::new((name, span))
+            Label::new((FileCache(name), span))
                 .with_message(str)
                 .with_color(Color::Yellow)
                 .with_order(order),

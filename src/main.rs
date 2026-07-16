@@ -19,7 +19,7 @@ use clap::Parser as _;
 use color_eyre::Result;
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
 use interpreter::{CodeGen, ExecMode, Instruction, Interpreter, IoRequest, IoResponse, Signal};
-use parser::Parser;
+use parser::{FileCache, Parser};
 
 use crate::{
     cli::{Args, KeyValue},
@@ -50,7 +50,7 @@ fn uu_main() -> Result<()> {
         let ast = match parser.parse(None, code.as_encoded_bytes()) {
             Ok(ast) => ast,
             Err((report, source)) => {
-                report.eprint(("CLI", source)).unwrap();
+                report.eprint((FileCache(None), source)).unwrap();
                 return Ok(());
             }
         };

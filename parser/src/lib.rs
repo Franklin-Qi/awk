@@ -21,7 +21,7 @@ use either::Either::{Left, Right};
 use hashbrown::HashMap;
 use lexer::{Span, Token};
 
-pub use crate::{ast::*, lex::Lexer};
+pub use crate::{ast::*, diagnostics::FileCache, lex::Lexer};
 use crate::{
     diagnostics::{ParsingError, report_error},
     lex::TokenExt,
@@ -52,7 +52,7 @@ pub struct Parser<'a> {
 }
 
 type AriadneErr<'a> = (
-    std::boxed::Box<ariadne::Report<'a, (&'a str, Span)>>,
+    std::boxed::Box<ariadne::Report<'a, (FileCache, Span)>>,
     ariadne::Source<&'a str>,
 );
 
@@ -82,16 +82,7 @@ impl<'a> Parser<'a> {
         self.file.clone_from(&file);
         let mut lex = Lexer::new(source, self.arena);
         let parsed = self.parse_top(&mut lex, true);
-        parsed.map_err(|error| {
-            report_error(
-                error,
-                // file.clone()
-                //     .and_then(|p| p.file_name())
-                //     .and_then(|p| p.to_str())
-                //     .unwrap_or("CLI"),
-                "CLI", source,
-            )
-        })
+        parsed.map_err(|error| report_error(error, file, source))
     }
 
     #[tracing::instrument]
