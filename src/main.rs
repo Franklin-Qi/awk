@@ -18,7 +18,7 @@ use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
 use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
-use interpreter::{CodeGen, ExecMode, Instruction, Interpreter, IoRequest, IoResponse, Signal};
+use interpreter::{CodeGen, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 use parser::{FileCache, Parser};
 
 use crate::{
@@ -77,15 +77,12 @@ fn uu_main() -> Result<()> {
         assert_eq!(bc.code.len(), bc.metadata.len());
 
         let bytecode = bc.code.iter().zip(bc.metadata.iter()).map(|(&x, &m)| {
-            let encoded = unsafe { std::mem::transmute::<Instruction, u128>(x) };
             let (_, (span, file)) = &metadata[m];
             let span = String::from_utf8_lossy(&source[span.clone()]);
-            [
-                format!("[0x{encoded:032x}]"),
-                format!("{x}"),
-                format!("{span}"),
-                format!("{file:?}"),
-            ]
+            let span = span
+                .split_once('\n')
+                .map_or(span.to_string(), |(s, _)| format!("{s}..."));
+            [x.to_string(), format!("{x:?}"), span, format!("{file:?}")]
         });
 
         let mut table = Table::new();

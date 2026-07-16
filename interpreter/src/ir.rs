@@ -134,9 +134,19 @@ impl Instruction {
     fn br(condition: Reg, then_label: Label) -> Self {
         Self::Branch { then_label, else_label: Label(0), condition }
     }
+
+    fn to_bytes(self) -> u128 {
+        unsafe { std::mem::transmute::<Self, u128>(self) }
+    }
 }
 
 impl Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "0x{:032x}", self.to_bytes())
+    }
+}
+
+impl Debug for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let op = self.display_name();
         let fmt_arg = |f: &mut Formatter, arg: &Arg, ty: &ArgTy, sep| match ty {
