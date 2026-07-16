@@ -82,6 +82,8 @@ pub enum ParsingError {
     ContinueOutsideLoop(Span),
     #[error("`return' used outside function context")]
     ReturnOutsideFunction(Span),
+    #[error("Arguments already provided in function-style call!")]
+    CommandDoubleCall(Span),
 }
 
 impl ParsingError {
@@ -131,6 +133,7 @@ impl ParsingError {
             Self::BreakOutsideLoopOrSwitch(span) => Some(span.clone()),
             Self::ContinueOutsideLoop(span) => Some(span.clone()),
             Self::ReturnOutsideFunction(span) => Some(span.clone()),
+            Self::CommandDoubleCall(span) => Some(span.clone()),
         }
     }
     fn hint(&self) -> Option<&'static str> {
@@ -173,6 +176,11 @@ impl ParsingError {
                 starting with a number.\nAdditionally, these must not match keywords (`if`, \
                 `while`, etc.) and built-in functions.\n\nNote: qualified identifiers, like \
                 `foo::bar`, must not have spaces around the `::`.",
+            ),
+            Self::CommandDoubleCall(_) => Some(
+                "Statements of `print` and `printf` can optionally be called with their arguments \
+                 inside parenthesis,\nbut no arguments may be passed outside these. Therefore, \
+                 this is incorrect: `print(1, 2), 3`.",
             ),
             _ => None,
         }

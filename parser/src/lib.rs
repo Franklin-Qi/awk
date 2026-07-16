@@ -89,7 +89,7 @@ impl<'a> Parser<'a> {
                 //     .and_then(|p| p.file_name())
                 //     .and_then(|p| p.to_str())
                 //     .unwrap_or("CLI"),
-                "TODO", source,
+                "CLI", source,
             )
         })
     }
@@ -586,14 +586,23 @@ impl<'a> Parser<'a> {
         let start = lex.span().start;
         let parent = lex.consume(&Token::OpenParent);
         let args = if parent {
-            let expr = self.parse_function_args(lex)?;
+            let mut args = self.parse_function_args(lex)?;
             lex.expect(
                 &Token::ClosedParent,
                 ParsingError::UnclosedParenthesisInStatement,
             )?;
-            expr
+            if lex.consume(&Token::Comma) {
+                let is_err = args.len() > 1;
+                // We parse anyway to advance the lexer.
+                self.parse_command_args(lex, &mut args)?;
+                if is_err {
+                    return Err(ParsingError::CommandDoubleCall(start..lex.span().end));
+                }
+            }
+            args
         } else {
-            self.parse_command_args(lex)?
+            let mut args = Vec::new_in(self.arena);
+            self.parse_command_args(lex, &mut args).map(|_| args)?
         };
         let redirection = self.parse_command_redirection(lex)?;
         let metadata = self.gen_metadata(start..lex.span().end);
@@ -628,18 +637,21 @@ impl<'a> Parser<'a> {
         Ok(arguments)
     }
 
-    fn parse_command_args(&mut self, lex: &mut Lexer<'a>) -> Result<Vec<'a, Expr<'a>>> {
-        let mut arguments = Vec::new_in(self.arena);
+    fn parse_command_args(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        arguments: &mut Vec<'a, Expr<'a>>,
+    ) -> Result<()> {
         let mut pratt = Pratt::new(self, false);
         if !lex.peek_with(Token::is_expr_start) {
-            return Ok(arguments);
+            return Ok(());
         }
 
         arguments.push(pratt.parse_command_argument(lex)?);
         while lex.consume(&Token::Comma) {
             arguments.push(pratt.parse_command_argument(lex)?);
         }
-        Ok(arguments)
+        Ok(())
     }
 
     fn parse_command_redirection(
