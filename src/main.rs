@@ -17,7 +17,6 @@ use std::{
 use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
-use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
 use interpreter::{CodeGen, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 use parser::{FileCache, Parser};
 
@@ -71,7 +70,10 @@ fn uu_main() -> Result<()> {
     let bc = cg.bytecode();
     let mut intrp = Interpreter::new(ExecMode::Uu, cg);
 
+    #[cfg(not(target_arch = "wasm32"))]
     if args.debug.is_some() {
+        use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED};
+
         let source = args.code.as_ref().unwrap().as_encoded_bytes();
         let mut out = BufWriter::new(stdout().lock());
         assert_eq!(bc.code.len(), bc.metadata.len());
