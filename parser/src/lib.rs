@@ -43,6 +43,12 @@ pub struct Parser<'a> {
     concurrent: bool,
     // Disables file include materialization ands enables metadata recording.
     dry: bool,
+    /// Whether `break` is allowed (inside a loop or `switch`).
+    break_allowed: bool,
+    /// Whether `continue` is allowed (inside a loop only).
+    continue_allowed: bool,
+    /// Whether `return` is allowed (inside a function body).
+    return_allowed: bool,
 }
 
 type AriadneErr<'a> = (
@@ -61,6 +67,9 @@ impl<'a> Parser<'a> {
             namespace: "awk",
             concurrent: false,
             dry,
+            break_allowed: false,
+            continue_allowed: false,
+            return_allowed: false,
         }
     }
 
@@ -87,6 +96,11 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_top(&mut self, lex: &mut Lexer<'a>, awk_namespace: bool) -> Result<&Ast<'a>> {
+        // Reset statement-context flags in case this parser is reused after an error.
+        self.break_allowed = false;
+        self.continue_allowed = false;
+        self.return_allowed = false;
+
         // Expects:
         //   * Directive
         //     * Namespace: Either handle here or in interpreter; idk.
@@ -342,6 +356,13 @@ impl<'a> Parser<'a> {
                     let mut case = None;
                     let mut body = Vec::new_in(self.arena);
 
+                    // `break` is allowed in `switch`; `continue` is not (gawk-compatible).
+                    // Only set if currently unset; only clear if this frame set it.
+                    let set_break = !self.break_allowed;
+                    if set_break {
+                        self.break_allowed = true;
+                    }
+
                     while !lex.consume(&Token::ClosedBrace) {
                         if lex.peek_is(&Token::Case) {
                             match case.take() {
@@ -378,6 +399,9 @@ impl<'a> Parser<'a> {
                             body.push(statement);
                         }
                     }
+                    if set_break {
+                        self.break_allowed = false;
+                    }
                     match case.take() {
                         Some(Right(())) => default = Some((body.into(), branches.len())),
                         Some(Left(atom)) => branches.push((atom, body.into())),
@@ -389,25 +413,41 @@ impl<'a> Parser<'a> {
                 }
                 Token::While => {
                     let condition = self.parse_parenthesized_expr(lex)?;
-                    let then_body = self.parse_statement_body(lex)?;
+                    let then_body =
+                        self.with_loop_context(|this| this.parse_statement_body(lex))?;
                     let metadata = self.gen_metadata(start..lex.span().end);
                     Statement::While { condition, then_body, metadata }
                 }
                 Token::Do => {
-                    let then_body = self.parse_body(lex)?;
+                    let then_body = self.with_loop_context(|this| this.parse_body(lex))?;
                     lex.expect(&Token::While, ParsingError::MissingWhileAfterDo)?;
                     let condition = self.parse_parenthesized_expr(lex)?;
                     let metadata = self.gen_metadata(start..lex.span().end);
                     Statement::DoWhile { then_body, condition, metadata }
                 }
-                Token::Break => Statement::Break(self.gen_metadata(lex.span())),
-                Token::Continue => Statement::Continue(self.gen_metadata(lex.span())),
-                Token::Return => Statement::Return(
-                    (!lex.peek_with(Token::is_stmnt_or_block_end))
-                        .then(|| self.parse_expression(lex, true))
-                        .transpose()?,
-                    self.gen_metadata(start..lex.span().end),
-                ),
+                Token::Break => {
+                    if !self.break_allowed {
+                        return Err(ParsingError::BreakOutsideLoopOrSwitch(lex.span()));
+                    }
+                    Statement::Break(self.gen_metadata(lex.span()))
+                }
+                Token::Continue => {
+                    if !self.continue_allowed {
+                        return Err(ParsingError::ContinueOutsideLoop(lex.span()));
+                    }
+                    Statement::Continue(self.gen_metadata(lex.span()))
+                }
+                Token::Return => {
+                    if !self.return_allowed {
+                        return Err(ParsingError::ReturnOutsideFunction(lex.span()));
+                    }
+                    Statement::Return(
+                        (!lex.peek_with(Token::is_stmnt_or_block_end))
+                            .then(|| self.parse_expression(lex, true))
+                            .transpose()?,
+                        self.gen_metadata(start..lex.span().end),
+                    )
+                }
                 Token::Next => Statement::Next(self.gen_metadata(lex.span())),
                 Token::NextFile => Statement::NextFile(self.gen_metadata(lex.span())),
                 Token::Exit => Statement::Exit(
@@ -468,7 +508,7 @@ impl<'a> Parser<'a> {
         };
 
         lex.expect(&Token::ClosedParent, ParsingError::InvalidForLoop)?;
-        let body = self.parse_statement_body(lex)?;
+        let body = self.with_loop_context(|this| this.parse_statement_body(lex))?;
         let metadata = self.gen_metadata(start..lex.span().end);
         Ok(Statement::For { init, condition, update, body, metadata })
     }
@@ -501,7 +541,7 @@ impl<'a> Parser<'a> {
             ParsingError::UnclosedParenthesisInStatement,
         )?;
 
-        let body = self.parse_statement_body(lex)?;
+        let body = self.with_loop_context(|this| this.parse_statement_body(lex))?;
         let metadata = self.gen_metadata(start..lex.span().end);
         Ok(Statement::ForEach { variable, array, body, metadata })
     }
@@ -643,7 +683,7 @@ impl<'a> Parser<'a> {
         let name = lex.expect_identifier()?.qualify(lex, self.namespace)?;
         let args = self.parse_signature(lex, &name)?;
         lex.consume(&Token::Newline);
-        let body = self.parse_body(lex)?;
+        let body = self.with_return_context(|this| this.parse_body(lex))?;
 
         self.ast.functions.insert(name, Function { args, body });
         Ok(())
@@ -701,6 +741,37 @@ impl<'a> Parser<'a> {
             &mut self.ast.rules
         }
         .push(rule);
+    }
+
+    /// Enable `break`/`continue` while parsing a loop body.
+    ///
+    /// Flags are only set when currently unset, and only cleared if this call
+    /// set them — so nested loops keep the outer context intact.
+    fn with_loop_context<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
+        let set_break = !self.break_allowed;
+        let set_continue = !self.continue_allowed;
+        if set_break {
+            self.break_allowed = true;
+        }
+        if set_continue {
+            self.continue_allowed = true;
+        }
+        let result = f(self);
+        if set_break {
+            self.break_allowed = false;
+        }
+        if set_continue {
+            self.continue_allowed = false;
+        }
+        result
+    }
+
+    /// Enable `return` while parsing a function body.
+    fn with_return_context<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
+        self.return_allowed = true;
+        let result = f(self);
+        self.return_allowed = false;
+        result
     }
 
     fn parse_function_call(
