@@ -140,13 +140,13 @@ impl Instruction {
     }
 }
 
-impl Display for Instruction {
+impl Debug for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "0x{:032x}", self.to_bytes())
     }
 }
 
-impl Debug for Instruction {
+impl Display for Instruction {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let op = self.display_name();
         let fmt_arg = |f: &mut Formatter, arg: &Arg, ty: &ArgTy, sep| match ty {

@@ -84,7 +84,7 @@ fn uu_main() -> Result<()> {
             let span = span
                 .split_once('\n')
                 .map_or(span.to_string(), |(s, _)| format!("{s}..."));
-            [x.to_string(), format!("{x:?}"), span, format!("{file:?}")]
+            [format!("{x:?}"), x.to_string(), span, format!("{file:?}")]
         });
 
         let mut table = Table::new();
