@@ -135,8 +135,41 @@ impl Instruction {
         Self::Branch { then_label, else_label: Label(0), condition }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn to_bytes(self) -> u128 {
-        unsafe { std::mem::transmute::<Self, u128>(self) }
+        // miri does not support inline asm. Intentionally if-gated so it's
+        // still compiled anyway.
+        if cfg!(miri) {
+            return Default::default();
+        }
+
+        /// Freezes the value at the LLVM level, essentially marks it as initialized,
+        /// even if possibly invalid. In this case, taking T means it is valid, and we
+        /// seek seek to make its whole bit pattern initialized but unspecified.
+        ///
+        /// Note that this relies on an LLVM hack; it's just a quite uncontroversial
+        /// cop-out for the lack of a freeze intrinsic, whose RFC is on the works.
+        #[inline(always)]
+        fn freeze<T>(mut val: T) -> T {
+            unsafe {
+                std::arch::asm!(
+                    "/* freeze {0} */",
+                    in(reg) &raw mut val,
+                    options(nostack, preserves_flags),
+                );
+            }
+            val
+        }
+
+        // SAFETY: the return value is (partially) unspecified, because
+        // it reads arbitrary padding bytes. However, it is frozen, and
+        // therefore not UB.
+        unsafe { std::mem::transmute::<Self, u128>(freeze(self)) }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn to_bytes(self) -> u128 {
+        Default::default()
     }
 }
 
