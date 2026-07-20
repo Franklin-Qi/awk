@@ -85,7 +85,7 @@ pub enum ParsingError {
     #[error("`return' used outside function context")]
     ReturnOutsideFunction(Span),
     #[error("Arguments already provided in function-style call!")]
-    CommandDoubleCall(Span),
+    CommandDoubleCall(Span, Span),
 }
 
 impl ParsingError {
@@ -135,7 +135,7 @@ impl ParsingError {
             Self::BreakOutsideLoopOrSwitch(span) => Some(span.clone()),
             Self::ContinueOutsideLoop(span) => Some(span.clone()),
             Self::ReturnOutsideFunction(span) => Some(span.clone()),
-            Self::CommandDoubleCall(span) => Some(span.clone()),
+            Self::CommandDoubleCall(span, _) => Some(span.clone()),
         }
     }
     fn hint(&self) -> Option<&'static str> {
@@ -179,10 +179,10 @@ impl ParsingError {
                 `while`, etc.) and built-in functions.\n\nNote: qualified identifiers, like \
                 `foo::bar`, must not have spaces around the `::`.",
             ),
-            Self::CommandDoubleCall(_) => Some(
-                "Statements of `print` and `printf` can optionally be called with their arguments \
-                 inside parenthesis,\nbut no arguments may be passed outside these. Therefore, \
-                 this is incorrect: `print(1, 2), 3`.",
+            Self::CommandDoubleCall(_, _) => Some(
+                "print and printf may use function-style syntax with arguments in parentheses. \
+                 When this syntax is used,\nno additional arguments are allowed outside the \
+                 parentheses. For example, `print(1, 2), 3` is invalid.",
             ),
             _ => None,
         }
@@ -194,6 +194,9 @@ impl ParsingError {
                 span.clone().into_inner(),
                 2 * span.is_left() as i32,
             )),
+            Self::CommandDoubleCall(_, span) => {
+                Some(("Unexpected additional arguments.", span.clone(), 0))
+            }
             _ => None,
         }
     }

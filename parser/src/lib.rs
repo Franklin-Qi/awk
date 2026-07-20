@@ -585,9 +585,13 @@ impl<'a> Parser<'a> {
             if lex.consume(&Token::Comma) {
                 let is_err = args.len() > 1;
                 // We parse anyway to advance the lexer.
+                let start_extra = lex.span().start;
                 self.parse_command_args(lex, &mut args)?;
                 if is_err {
-                    return Err(ParsingError::CommandDoubleCall(start..lex.span().end));
+                    return Err(ParsingError::CommandDoubleCall(
+                        start..lex.span().end,
+                        start_extra..lex.span().end,
+                    ));
                 }
             }
             args
