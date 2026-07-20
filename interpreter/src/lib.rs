@@ -8,7 +8,10 @@ pub(crate) mod ir;
 mod types;
 mod vm;
 
-pub use ir::{Instruction, lower::CodeGen};
+pub use ir::{
+    Instruction,
+    lower::{Bytecode, CodeGen},
+};
 pub use vm::{ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 
 #[derive(Debug, thiserror::Error)]

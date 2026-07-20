@@ -73,6 +73,13 @@ impl Value<'_> {
         }
     }
 
+    pub fn to_int(&self) -> isize {
+        if let &Self::Int(int) = self {
+            return int;
+        }
+        self.to_num().trunc() as isize
+    }
+
     pub fn b2f(b: bool) -> Self {
         Self::Float(b as usize as f64)
     }

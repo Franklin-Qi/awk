@@ -71,7 +71,7 @@ impl<'a> CodeGen<'a> {
         self.bc.begin_file_label = self.lower_special_rules(&ast.begin_file);
         self.bc.end_file_label = self.lower_special_rules(&ast.end_file);
         self.bc.end_label = self.lower_special_rules(&ast.end);
-        self.bc.records_label = Label(self.bc.len());
+        self.bc.rules_label = Label(self.bc.len());
 
         for rule in &ast.rules {
             self.lower_rule(rule);
@@ -763,6 +763,7 @@ impl<'a> CodeGen<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct Bytecode<'a> {
     pub code: Vec<'a, Instruction>,
     pub metadata: StdVec<MetaId>,
@@ -770,7 +771,7 @@ pub struct Bytecode<'a> {
     pub(crate) begin_file_label: Label,
     pub(crate) end_file_label: Label,
     pub(crate) end_label: Label,
-    pub(crate) records_label: Label,
+    pub(crate) rules_label: Label,
 }
 
 #[derive(Clone, Debug)]
@@ -788,7 +789,7 @@ impl<'a> Bytecode<'a> {
             begin_file_label: Label(0),
             end_file_label: Label(0),
             end_label: Label(0),
-            records_label: Label(0),
+            rules_label: Label(0),
         }
     }
 
@@ -813,11 +814,11 @@ impl<'a> Bytecode<'a> {
     }
 
     pub fn end_code(&self) -> &[Instruction] {
-        &self.code[self.end_label.0 as _..self.records_label.0 as _]
+        &self.code[self.end_label.0 as _..self.rules_label.0 as _]
     }
 
-    pub fn records_code(&self) -> &[Instruction] {
-        &self.code[self.records_label.0 as _..]
+    pub fn rules_code(&self) -> &[Instruction] {
+        &self.code[self.rules_label.0 as _..]
     }
 }
 

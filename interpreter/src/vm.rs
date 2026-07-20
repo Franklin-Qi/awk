@@ -41,19 +41,21 @@ pub struct Interpreter<'a> {
     compat: ExecMode,
 }
 
+#[derive(Debug)]
 pub enum Signal {
-    Return,
     Next,
     NextFile,
-    Exit,
+    Exit(i32),
     End,
     Suspend(IoRequest),
 }
 
+#[derive(Debug)]
 pub enum IoRequest {
     WriteStdout(StdVec<u8>),
 }
 
+#[derive(Debug)]
 pub enum IoResponse {
     Empty,
 }
@@ -149,7 +151,13 @@ impl<'a> Consts<'a> {
 }
 
 impl Interpreter<'_> {
-    pub fn run_chunk(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
+    pub fn run_code(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
+        self.program_counter = 0;
+        self.run_chunk(bytecode)
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn run_chunk(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
         macro_rules! rx {
             ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
                 rx!($self, $src: $ty);
@@ -290,9 +298,12 @@ impl Interpreter<'_> {
                     continue;
                 }
                 // TODO resolve return/exit args.
-                Instruction::Exit { arg: _arg, ty: _ty } => return Ok(Signal::Exit),
-                Instruction::Return { arg: _, ty: _ } => return Ok(Signal::Return),
-                Instruction::ReturnUnassigned => return Ok(Signal::Return),
+                Instruction::Exit { arg, ty } => {
+                    rx!(self, arg: ty);
+                    return Ok(Signal::Exit(arg.to_int() as i32));
+                }
+                Instruction::Return { arg: _, ty: _ } => todo!(),
+                Instruction::ReturnUnassigned => todo!(),
                 Instruction::Next => return Ok(Signal::Next),
                 Instruction::NextFile => return Ok(Signal::NextFile),
             }

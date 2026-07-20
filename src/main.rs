@@ -6,22 +6,24 @@
 // static POSIX: bool = false;
 
 mod cli;
+mod event;
 mod utils;
 
 use std::{
     env::args_os,
     fs,
-    io::{self, BufWriter, Write, stdout},
+    io::{BufWriter, Write, stdout},
 };
 
 use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
-use interpreter::{CodeGen, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
+use interpreter::{CodeGen, ExecMode, Interpreter};
 use parser::{FileCache, Parser};
 
 use crate::{
     cli::{Args, KeyValue},
+    event::AwkRt,
     utils::{ensure_consistent_panic, exit_err},
 };
 
@@ -68,7 +70,7 @@ fn uu_main() -> Result<()> {
     }
 
     let bc = cg.bytecode();
-    let mut intrp = Interpreter::new(ExecMode::Uu, cg);
+    let intrp = Interpreter::new(ExecMode::Uu, cg);
 
     #[cfg(not(target_arch = "wasm32"))]
     if args.debug.is_some() {
@@ -96,26 +98,7 @@ fn uu_main() -> Result<()> {
         writeln!(out, "{table}")?;
     }
 
-    // Small event loop to drive begin blocks for testing purposes.
-    // To be refactored into an I/O runtime.
-    let code = bc.begin_code();
-    let mut sig = intrp.run_chunk(code)?;
-    loop {
-        let req = match sig {
-            Signal::Suspend(req) => req,
-            Signal::End => break,
-            _ => todo!(),
-        };
-        let res = perform_io(&req);
-        sig = intrp.resume(code, req, res)?;
-    }
+    AwkRt::new(intrp, &bc, &args.read_queue).main_event_loop()?;
 
     Ok(())
-}
-
-/// Small shim to test I/O. To be refactored/removed.
-fn perform_io(req: &IoRequest) -> io::Result<IoResponse> {
-    match req {
-        IoRequest::WriteStdout(buf) => stdout().lock().write_all(buf).map(|_| IoResponse::Empty),
-    }
 }
