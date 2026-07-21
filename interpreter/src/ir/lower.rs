@@ -3,12 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{
-    borrow::Cow,
-    mem::forget,
-    ops::{Deref, Range},
-    vec::Vec as StdVec,
-};
+use std::{borrow::Cow, mem::forget, ops::Deref, vec::Vec as StdVec};
 
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
@@ -20,6 +15,7 @@ use parser::{
 };
 
 use crate::{
+    CodeRange,
     ir::{Arg, ArgTy, Instruction, IxWidth, Label, NonLocal, Reg, RegWidth},
     types::Value,
     vm::{Consts, SymbolTable},
@@ -806,24 +802,24 @@ impl<'a> Bytecode<'a> {
         &mut self.code[label.0 as usize]
     }
 
-    pub fn begin_code(&self) -> Range<IxWidth> {
-        self.begin_label.0..self.begin_file_label.0
+    pub fn begin_code(&self) -> CodeRange {
+        CodeRange(self.begin_label.0..self.begin_file_label.0)
     }
 
-    pub fn begin_file_code(&self) -> Range<IxWidth> {
-        self.begin_file_label.0..self.end_file_label.0
+    pub fn begin_file_code(&self) -> CodeRange {
+        CodeRange(self.begin_file_label.0..self.end_file_label.0)
     }
 
-    pub fn end_file_code(&self) -> Range<IxWidth> {
-        self.end_file_label.0..self.end_label.0
+    pub fn end_file_code(&self) -> CodeRange {
+        CodeRange(self.end_file_label.0..self.end_label.0)
     }
 
-    pub fn end_code(&self) -> Range<IxWidth> {
-        self.end_label.0..self.rules_label.0
+    pub fn end_code(&self) -> CodeRange {
+        CodeRange(self.end_label.0..self.rules_label.0)
     }
 
-    pub fn rules_code(&self) -> Range<IxWidth> {
-        self.rules_label.0..self.len()
+    pub fn rules_code(&self) -> CodeRange {
+        CodeRange(self.rules_label.0..self.len())
     }
 }
 

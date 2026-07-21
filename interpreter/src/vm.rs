@@ -43,11 +43,16 @@ pub struct Interpreter<'a> {
 
 #[derive(Debug)]
 pub enum Signal {
+    Suspend(IoRequest),
+    Terminal(CtrlSig),
+}
+
+#[derive(Debug)]
+pub enum CtrlSig {
+    End,
     Next,
     NextFile,
     Exit(i32),
-    End,
-    Suspend(IoRequest),
 }
 
 #[derive(Debug)]
@@ -75,6 +80,9 @@ pub struct SymbolTable<'a> {
 
 #[derive(Debug)]
 pub struct Consts<'a>(pub IndexSet<Value<'a>, RandomState, &'a Bump>);
+
+#[derive(Debug, Clone)]
+pub struct CodeRange(pub(crate) Range<IxWidth>);
 
 impl<'a> Interpreter<'a> {
     pub fn new(compat: ExecMode, code: CodeGen<'a>) -> Self {
@@ -151,9 +159,9 @@ impl<'a> Consts<'a> {
 }
 
 impl Interpreter<'_> {
-    pub fn run_code(&mut self, bytecode: &Bytecode, range: Range<IxWidth>) -> io::Result<Signal> {
-        self.program_counter = range.start as _;
-        self.run_chunk(&bytecode.code, range.end)
+    pub fn run_code(&mut self, bytecode: &Bytecode, range: CodeRange) -> io::Result<Signal> {
+        self.program_counter = range.0.start as _;
+        self.run_chunk(&bytecode.code, range.0.end)
     }
 
     #[allow(clippy::unnecessary_wraps)]
@@ -302,16 +310,16 @@ impl Interpreter<'_> {
                 // TODO resolve return/exit args.
                 Instruction::Exit { arg, ty } => {
                     rx!(self, arg: ty);
-                    return Ok(Signal::Exit(arg.to_int() as i32));
+                    return Ok(Signal::Terminal(CtrlSig::Exit(arg.to_int() as i32)));
                 }
                 Instruction::Return { arg: _, ty: _ } => todo!(),
                 Instruction::ReturnUnassigned => todo!(),
-                Instruction::Next => return Ok(Signal::Next),
-                Instruction::NextFile => return Ok(Signal::NextFile),
+                Instruction::Next => return Ok(Signal::Terminal(CtrlSig::Next)),
+                Instruction::NextFile => return Ok(Signal::Terminal(CtrlSig::NextFile)),
             }
             self.program_counter += 1;
         }
-        Ok(Signal::End)
+        Ok(Signal::Terminal(CtrlSig::End))
     }
 
     /// Resumes execution from a suspend/yield point. Receives the request
@@ -323,12 +331,12 @@ impl Interpreter<'_> {
     pub fn resume(
         &mut self,
         bytecode: &Bytecode,
-        range: Range<IxWidth>,
+        range: CodeRange,
         _req: IoRequest,
         _res: io::Result<IoResponse>,
     ) -> io::Result<Signal> {
         self.program_counter += 1;
-        self.run_chunk(&bytecode.code, range.end)
+        self.run_chunk(&bytecode.code, range.0.end)
     }
 
     fn print_req(

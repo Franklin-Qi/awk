@@ -12,7 +12,7 @@ pub use ir::{
     Instruction,
     lower::{Bytecode, CodeGen},
 };
-pub use vm::{ExecMode, Interpreter, IoRequest, IoResponse, Signal};
+pub use vm::{CodeRange, CtrlSig, ExecMode, Interpreter, IoRequest, IoResponse, Signal};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
