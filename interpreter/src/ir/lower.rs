@@ -3,7 +3,12 @@
 // For the full copyright and license information, please view the LICENSE
 // files that was distributed with this source code.
 
-use std::{borrow::Cow, mem::forget, ops::Deref, vec::Vec as StdVec};
+use std::{
+    borrow::Cow,
+    mem::forget,
+    ops::{Deref, Range},
+    vec::Vec as StdVec,
+};
 
 use bumpalo::{Bump, collections::Vec};
 use either::Either;
@@ -801,24 +806,24 @@ impl<'a> Bytecode<'a> {
         &mut self.code[label.0 as usize]
     }
 
-    pub fn begin_code(&self) -> &[Instruction] {
-        &self.code[self.begin_label.0 as _..self.begin_file_label.0 as _]
+    pub fn begin_code(&self) -> Range<IxWidth> {
+        self.begin_label.0..self.begin_file_label.0
     }
 
-    pub fn begin_file_code(&self) -> &[Instruction] {
-        &self.code[self.begin_file_label.0 as _..self.end_file_label.0 as _]
+    pub fn begin_file_code(&self) -> Range<IxWidth> {
+        self.begin_file_label.0..self.end_file_label.0
     }
 
-    pub fn end_file_code(&self) -> &[Instruction] {
-        &self.code[self.end_file_label.0 as _..self.end_label.0 as _]
+    pub fn end_file_code(&self) -> Range<IxWidth> {
+        self.end_file_label.0..self.end_label.0
     }
 
-    pub fn end_code(&self) -> &[Instruction] {
-        &self.code[self.end_label.0 as _..self.rules_label.0 as _]
+    pub fn end_code(&self) -> Range<IxWidth> {
+        self.end_label.0..self.rules_label.0
     }
 
-    pub fn rules_code(&self) -> &[Instruction] {
-        &self.code[self.rules_label.0 as _..]
+    pub fn rules_code(&self) -> Range<IxWidth> {
+        self.rules_label.0..self.len()
     }
 }
 

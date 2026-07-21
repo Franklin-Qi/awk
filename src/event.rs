@@ -29,8 +29,8 @@ impl<'a> AwkRt<'a> {
     }
 
     pub fn begin_event_loop(&mut self) -> Result<()> {
-        let code = self.bc.begin_code();
-        let mut sig = self.intrp.run_code(code)?;
+        let range = self.bc.begin_code();
+        let mut sig = self.intrp.run_code(self.bc, range.clone())?;
         loop {
             let req = match sig {
                 Signal::Suspend(req) => req,
@@ -40,14 +40,14 @@ impl<'a> AwkRt<'a> {
                 Signal::Exit(code) => return self.end_event_loop(code),
             };
             let res = self.perform_io(&req);
-            sig = self.intrp.resume(code, req, res)?;
+            sig = self.intrp.resume(self.bc, range.clone(), req, res)?;
         }
         Ok(())
     }
 
     pub fn end_event_loop(&mut self, exit_code: i32) -> Result<()> {
-        let code = self.bc.end_code();
-        let mut sig = self.intrp.run_code(code)?;
+        let range = self.bc.end_code();
+        let mut sig = self.intrp.run_code(self.bc, range.clone())?;
         loop {
             let req = match sig {
                 Signal::Suspend(req) => req,
@@ -56,16 +56,16 @@ impl<'a> AwkRt<'a> {
                 Signal::Next | Signal::NextFile => unreachable!(),
             };
             let res = self.perform_io(&req);
-            sig = self.intrp.resume(code, req, res)?;
+            sig = self.intrp.resume(self.bc, range.clone(), req, res)?;
         }
         exit(exit_code)
     }
 
     pub fn rule_event_loop(&mut self) -> Result<()> {
-        let code = self.bc.rules_code();
+        let range = self.bc.rules_code();
 
         while let Some(_item) = self.queue.split_off_first() {
-            let mut sig = self.intrp.run_code(code)?;
+            let mut sig = self.intrp.run_code(self.bc, range.clone())?;
             loop {
                 let req = match sig {
                     Signal::Suspend(req) => req,
@@ -75,7 +75,7 @@ impl<'a> AwkRt<'a> {
                     Signal::Exit(code) => return self.end_event_loop(code),
                 };
                 let res = self.perform_io(&req);
-                sig = self.intrp.resume(code, req, res)?;
+                sig = self.intrp.resume(self.bc, range.clone(), req, res)?;
             }
         }
         Ok(())

@@ -19,7 +19,7 @@ use parser::{Command, Identifier, Redirection};
 
 use crate::{
     ir::{
-        Instruction, Label, NonLocal, Reg,
+        Instruction, IxWidth, Label, NonLocal, Reg,
         lower::{Bytecode, CodeGen},
     },
     types::Value,
@@ -151,13 +151,13 @@ impl<'a> Consts<'a> {
 }
 
 impl Interpreter<'_> {
-    pub fn run_code(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
-        self.program_counter = 0;
-        self.run_chunk(bytecode)
+    pub fn run_code(&mut self, bytecode: &Bytecode, range: Range<IxWidth>) -> io::Result<Signal> {
+        self.program_counter = range.start as _;
+        self.run_chunk(&bytecode.code, range.end)
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn run_chunk(&mut self, bytecode: &[Instruction]) -> io::Result<Signal> {
+    fn run_chunk(&mut self, bytecode: &[Instruction], end: IxWidth) -> io::Result<Signal> {
         macro_rules! rx {
             ($self:expr, $dest:expr, $src:ident: $ty:ident, $e:expr) => {{
                 rx!($self, $src: $ty);
@@ -185,7 +185,9 @@ impl Interpreter<'_> {
                 $self.registers.write($dest, $e);
             }};
         }
-        while let Some(&instr) = bytecode.get(self.program_counter) {
+        while let Some(&instr) = bytecode.get(self.program_counter)
+            && self.program_counter < end as _
+        {
             match instr {
                 Instruction::Record { dest: _, arg: _, ty: _ } => todo!(),
                 Instruction::Negation { dest, arg, ty } => {
@@ -320,12 +322,13 @@ impl Interpreter<'_> {
     /// Allows us to trivially drive multiple code blocks concurrently.
     pub fn resume(
         &mut self,
-        bytecode: &[Instruction],
+        bytecode: &Bytecode,
+        range: Range<IxWidth>,
         _req: IoRequest,
         _res: io::Result<IoResponse>,
     ) -> io::Result<Signal> {
         self.program_counter += 1;
-        self.run_chunk(bytecode)
+        self.run_chunk(&bytecode.code, range.end)
     }
 
     fn print_req(
