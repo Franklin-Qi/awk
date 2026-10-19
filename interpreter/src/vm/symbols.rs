@@ -112,7 +112,7 @@ pub struct Record {
     fields: Option<Vec<Span>>,
     split_mode: SplitMode,
     /// Parsed `FIELDWIDTHS` designators; filled on assignment, used per record.
-    fieldwidths: SmallVec<[FieldWidth; 8]>,
+    fieldwidths: Vec<FieldWidth>,
 }
 
 // TODO: add variants for overridden modes (GNU CSV ext) and/or to `ExecMode`.
@@ -738,8 +738,8 @@ struct FieldWidth {
 /// Grammar: blank-separated tokens, each `width`, `skip:width`, `*`, or
 /// `skip:*`. `*` / `skip:*` may appear only as the final token. Returns `None`
 /// for invalid specs (negative/zero widths, misplaced `*`, junk, etc.).
-fn parse_fieldwidths(spec: &[u8]) -> Option<SmallVec<[FieldWidth; 8]>> {
-    let mut specs: SmallVec<[FieldWidth; 8]> = SmallVec::new();
+fn parse_fieldwidths(spec: &[u8]) -> Option<Vec<FieldWidth>> {
+    let mut specs = Vec::<FieldWidth>::new();
     for token in spec
         .split(|&b| matches!(b, b' ' | b'\t'))
         .filter(|t| !t.is_empty())
