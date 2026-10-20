@@ -368,6 +368,9 @@ impl Record {
     ) -> Result<&mut Vec<Span>, RegexError> {
         Ok(if let Some(ref mut fields) = self.fields {
             fields
+        } else if self.raw.is_empty() {
+            // An empty record has no fields, whatever FS is
+            self.init_fields().1
         } else {
             match self.split_mode {
                 SplitMode::FsWhitespace => self.fs_whitespace_split(),
@@ -452,7 +455,9 @@ impl Record {
             memchr3_iter(b' ', b'\t', b'\n', raw)
                 .map(to_span)
                 .coalesce(|a, b| (a.end == b.start).then_some(b.since(a.start)).ok_or((a, b)))
-                .split_by(raw.len()),
+                .split_by(raw.len())
+                // Leading and trailing blanks don't start or end a field
+                .filter(|span| span.start != span.end),
         );
         buf
     }
