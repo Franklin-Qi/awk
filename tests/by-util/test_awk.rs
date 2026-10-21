@@ -795,7 +795,14 @@ fn stmnt_conditions_set_typedness_eagerly() {
 #[test]
 fn default_fs_ignores_leading_and_trailing_blanks() {
     ucmd()
-        .arg(r#"BEGIN { $0 = " \t foo  bar \n"; print NF, $1, $2; $1 = $1; print "[" $0 "]" }"#)
+        .arg(
+            r#"BEGIN {
+                $0 = " \t foo  bar \n"
+                print NF, $1, $2
+                $1 = $1
+                print "[" $0 "]"
+            }"#,
+        )
         .succeeds()
         .stdout_is("2 foo bar\n[foo bar]\n");
 }
@@ -803,7 +810,14 @@ fn default_fs_ignores_leading_and_trailing_blanks() {
 #[test]
 fn empty_record_has_no_fields() {
     ucmd()
-        .arg(r#"BEGIN { $0 = ""; print NF; FS = ","; $0 = ""; print NF; FS = "[,;]"; $0 = ""; print NF; FS = " "; $0 = "   "; print NF }"#)
+        .arg(
+            r#"BEGIN {
+                $0 = ""; print NF
+                FS = ","; $0 = ""; print NF
+                FS = "[,;]"; $0 = ""; print NF
+                FS = " "; $0 = "   "; print NF
+            }"#,
+        )
         .succeeds()
         .stdout_is("0\n0\n0\n0\n");
 }

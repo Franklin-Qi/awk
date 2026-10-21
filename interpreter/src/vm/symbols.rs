@@ -457,7 +457,7 @@ impl Record {
                 .coalesce(|a, b| (a.end == b.start).then_some(b.since(a.start)).ok_or((a, b)))
                 .split_by(raw.len())
                 // Leading and trailing blanks don't start or end a field
-                .filter(|span| span.start != span.end),
+                .filter(|span| !span.is_empty()),
         );
         buf
     }
