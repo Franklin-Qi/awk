@@ -513,9 +513,12 @@ impl<'a> CodeGen<'a> {
                 TypedArg::new_cnt(self, val(buf.into()))
             }
             Atom::Regex(r) => {
+                // A bare `/re/` is `$0 ~ /re/`
+                let (arg, ty) = TypedArg::new_imm(0).into_arg();
+                self.emit(Instruction::LoadF { dest, arg, ty });
                 let buf = &*self.arena.alloc_slice_copy(r.as_ref());
                 let (rhs, tyr) = TypedArg::new_cnt(self, Value::new_regex(buf.into())).into_arg();
-                let (lhs, tyl) = TypedArg::new_imm(0).into_arg();
+                let (lhs, tyl) = TypedArg::new_reg(dest).into_arg();
                 self.emit(Instruction::Matches { dest, rhs, lhs, tyr, tyl });
                 TypedArg::new_reg(dest)
             }

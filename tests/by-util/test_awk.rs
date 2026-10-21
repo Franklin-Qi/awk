@@ -881,3 +881,21 @@ fn mdim_in_array() {
         .succeeds()
         .stdout_is("1 1 1 1 0\n");
 }
+
+#[test]
+fn bare_regex_pattern_matches_record() {
+    ucmd()
+        .args(&["/b/ { print NR \": \" $0 } !/a/ { print \"no a\" }"])
+        .pipe_in("a b\nc\nab\n")
+        .succeeds()
+        .stdout_is("1: a b\nno a\n3: ab\n");
+}
+
+#[test]
+fn bare_regex_in_expression_matches_record() {
+    ucmd()
+        .arg(r#"{ n += /x/; if (/^y/) print "y", NR } END { print n }"#)
+        .pipe_in("x\ny\nxx\n")
+        .succeeds()
+        .stdout_is("y 2\n2\n");
+}
