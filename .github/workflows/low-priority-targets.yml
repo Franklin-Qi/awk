@@ -47,7 +47,7 @@ jobs:
     - uses: actions/checkout@v7
     - name: setup toolchain
       shell: 'C:\msys64\usr\bin\bash.exe --login -eo pipefail {0}'
-      run:  pacman -Sy --noconfirm --needed rust
+      run:  pacman -Sy --noconfirm --needed rust clang
     - name: check
       shell: 'C:\msys64\usr\bin\bash.exe --login -eo pipefail {0}'
       env:
