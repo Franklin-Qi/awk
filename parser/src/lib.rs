@@ -12,8 +12,6 @@ mod sexpr;
 #[cfg(test)]
 mod tests;
 
-#[cfg(not(unix))]
-use std::{borrow::Cow, path::PathBuf};
 use std::{
     fs::File,
     mem::{replace, take},
@@ -1042,6 +1040,8 @@ fn make_path(slice: &[u8]) -> Rc<Path> {
 
 #[cfg(not(unix))]
 fn make_path(slice: &[u8]) -> Rc<Path> {
+    use std::borrow::Cow;
+
     match String::from_utf8_lossy(slice) {
         Cow::Borrowed(s) => Rc::from(Path::new(s)),
         Cow::Owned(s) => Rc::from(PathBuf::from(s)),
