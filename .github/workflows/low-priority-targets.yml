@@ -24,6 +24,10 @@ jobs:
     - uses: dtolnay/rust-toolchain@1.96.1
       with:
         targets: wasm32-wasip1
+    - name: install wasi-sdk
+      run: |
+        curl -sSfL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+        echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-33.0-x86_64-linux" >> "$GITHUB_ENV"
     - name: check
       run: cargo check --target wasm32-wasip1
 
